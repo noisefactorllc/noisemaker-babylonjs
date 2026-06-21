@@ -49,12 +49,10 @@ config (`parity/programs/remap_zones.dsl` — a quad + a triangle routing two no
 are byte-identical. (~31 other effects *declare* a `uniformLayout` but use plain uniforms in WebGL2 —
 the layout is WGSL/fallback metadata — so the UBO bind is a no-op for them.)
 
-The 4 remaining non-byte-identical effects all require an external source the headless harness can't
-supply: **media** (texture), **text** (glyphs), **roll** (MIDI), and **meshLoader** (OBJ geometry).
-The mesh *raster* `meshLoader` would feed (`render/meshRender`, `drawMode:'triangles'`) was proven
-byte-identical (max-abs-diff 0) by injecting identical geometry into both engines — a depth-tested,
-back-face-culled, Blinn-Phong-lit sphere — but the **`meshLoader` effect itself (host OBJ load → mesh
-surfaces) is not yet vetted**.
+The 4 effects that are **not** byte-verified all require an external runtime input the headless
+harness can't supply deterministically — `media`, `text`, `roll`, and `meshLoader`. They are the only
+gaps in the catalog; see **[Not included in this pass](#not-included-in-this-pass)** for the full list
+and follow-up notes.
 
 **End-to-end:** the complex emergent test program (3D perlin → 1M-agent flow-field particles
 [MRT+points+billboards] → blur → navierStokes ×40 → palette/lighting/adjust/bloom/lens/vignette) is
@@ -81,6 +79,36 @@ byte-identical to the reference** for both `renderCubemapSurface` and `renderCub
 npm install && bash vendor/fetch.sh           # deps + fetch the published engine (gitignored)
 bash parity/sweep.sh                           # goldens + candidates, both via the vendored engine
 ```
+
+## Not included in this pass
+
+Four of the 184 catalogued effects (`tools/catalog.mjs`) are **not** byte-verified by this port. Each
+needs a runtime input the headless parity harness can't supply deterministically — these are the only
+gaps in the catalog; the other **180 are byte-identical**.
+
+| Effect | Namespace | External input it needs |
+|---|---|---|
+| `media`      | `synth`  | a host-supplied image/video texture |
+| `text`       | `filter` | rasterized glyphs (a font / glyph atlas) |
+| `roll`       | `synth`  | a MIDI / piano-roll event stream |
+| `meshLoader` | `render` | host-side OBJ geometry (vertex / index buffers) |
+
+**Follow-up work**
+
+- **`media`** — upload host media into a surface and sample it. Expected to need **no new backend
+  code** (it's a plain texture read), once a deterministic image source is wired into the harness.
+- **`text`** — supply a glyph-atlas texture (e.g. rasterized via Canvas2D) as the input surface; it
+  then runs as a standard input filter.
+- **`roll`** — route host MIDI events into the effect's uniforms / input surface.
+- **`meshLoader`** — parse OBJ → populate the mesh surfaces. **The triangle-raster path it feeds is
+  already proven byte-identical**: `render/meshRender` (`drawMode:'triangles'`, depth-test +
+  back-face cull + `gl_VertexID` geometry fetch, Blinn-Phong-lit) renders at max-abs-diff 0 when
+  identical geometry is *injected* into both engines (a sphere). Only the host OBJ-load → mesh-surface
+  step is unvetted, and it needs no new raster work — just verification of the parse/upload against
+  the reference.
+- **Standalone package.** The port consumes the published engine at build/test time via
+  `vendor/fetch.sh` (gitignored — the `node_modules` posture). Packaging `noisemaker-babylon` itself
+  as a distributable npm module (that fetches the engine on install) is open.
 
 ## Usage
 
@@ -139,9 +167,9 @@ half-float, readback, **MRT, `drawMode:points|billboards` agent deposits, 3D-vol
 single-face cubemaps, the `meshRender` triangle raster (depth+cull), `loopBegin`/`loopEnd`, and the
 SMRTicles wrappers, the 6-face cubemap bake → Babylon-native cube texture, and the `remap`
 polygon-zone router (std140 UBO)** are all done and parity-verified (180/184 byte-identical; all 6
-cube faces byte-identical). **Remaining:** host-side OBJ loading for `meshLoader` (external geometry,
-like `media`'s external texture — **not yet vetted**) and vendoring the reference engine for a
-standalone published package. Local-only; not pushed. See PORTING-GUIDE.md.
+cube faces byte-identical). **Remaining:** the 4 external-input effects (`media`/`text`/`roll`/
+`meshLoader`) and packaging as a standalone module — see
+[Not included in this pass](#not-included-in-this-pass). Pushed (private). See PORTING-GUIDE.md.
 
 ## License
 
