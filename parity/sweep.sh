@@ -21,19 +21,23 @@ tol_for() {
     *) echo "2.001 0.98";;
   esac
 }
-# Documented skips: external-input effects ONLY — they need a MIDI/media/glyph/projection source
-# the parity harness doesn't supply (golden is degenerate). Everything else is graded, including
-# the continuous solvers AND the agent/points sims, all of which evolve to a bit-identical steady
-# state (the EVOLVE map in render-batch.mjs runs them ~30s; the additive deposit blend is exact —
-# raw blendFunc(ONE,ONE)). The 10 agent sims (physarum/flow/life/…) are now BYTE-IDENTICAL.
-is_skip() { case "$1" in media|text|remap) return 0;; *) return 1;; esac; }
+# Documented skips: external-input effects ONLY — they need a MIDI/media/glyph source the parity
+# harness doesn't supply (golden is degenerate). NOTE remap is NOT skipped: its inputs are engine
+# surfaces and it grades byte-identical via the std140 UBO path (the only "external" part is the
+# zone-polygon config, which fills uniforms). Everything else is graded, including the continuous
+# solvers AND the agent/points sims, all of which evolve to a bit-identical steady state (the EVOLVE
+# map in render-batch.mjs runs them ~30s; the additive deposit blend is exact — raw blendFunc(ONE,ONE)).
+is_skip() { case "$1" in media|text) return 0;; *) return 1;; esac; }
 
 PY="parity/.venv/bin/python"
 
-# Names: args, or every program with a golden.
+# Names: args, or every effect program with a golden. The live-corpus fixtures (corpus_*) are
+# EXCLUDED here — they are stateful/emergent compositions that must be evolved ~30s (their goldens
+# are minted at 1800 frames) and are graded by their own harness, parity/corpus/sweep.sh. Grading
+# them here (un-evolved, frame 8) would falsely fail them on a frame-count mismatch.
 if [[ $# -gt 0 ]]; then NAMES=("$@"); else
   NAMES=()
-  for g in parity/out/*.golden.png; do n="$(basename "$g" .golden.png)"; [[ -f "parity/programs/$n.dsl" ]] && NAMES+=("$n"); done
+  for g in parity/out/*.golden.png; do n="$(basename "$g" .golden.png)"; [[ "$n" == corpus_* ]] && continue; [[ -f "parity/programs/$n.dsl" ]] && NAMES+=("$n"); done
 fi
 
 # Render all candidates in ONE browser session.

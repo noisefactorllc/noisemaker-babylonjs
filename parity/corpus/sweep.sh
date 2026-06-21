@@ -31,6 +31,7 @@ import("./tools/export-fat-graph.mjs").then(async ({exportFatGraph})=>{
   fs.writeFileSync("parity/_corpus.manifest", lines.map(l=>l.split("\t").slice(0,2).join("\t")).join("\n")+"\n");
   console.error(`[corpus] ${lines.length} gradeable, ${skipped.length} skipped`);
   skipped.forEach(s=>console.error("  SKIP "+s));
+})
 '
 [[ -s "$MAN" ]] || { echo "no gradeable corpus programs"; exit 1; }
 NAMES=$(cut -f1 "$MAN" | tr "\n" " ")
