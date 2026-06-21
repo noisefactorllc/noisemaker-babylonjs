@@ -27,3 +27,5 @@ parity/programs/corpus_*.dsl
 parity/out/corpus_*
 examples/cubemap-bundle.js
 examples/demo.cubemap.fatgraph.json
+examples/hero-bundle.js
+examples/hero.png
