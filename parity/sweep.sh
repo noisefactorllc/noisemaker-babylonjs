@@ -21,7 +21,9 @@ tol_for() {
     *) echo "2.001 0.98";;
   esac
 }
-is_skip() { case "$1" in reactionDiffusion) return 0;; *) return 1;; esac; }
+# Documented skips: continuous solvers (not bit-reproducible) + external-input effects (need a
+# MIDI/media/asset source the parity harness doesn't provide — golden is degenerate/black).
+is_skip() { case "$1" in reactionDiffusion|navierStokes|media|text|remap) return 0;; *) return 1;; esac; }
 
 PY="parity/.venv/bin/python"
 

@@ -25,10 +25,12 @@ import { Color4 } from '@babylonjs/core/Maths/math.color.js'
 // Minimal fullscreen vertex. We supply our OWN (instead of Babylon's default "postprocess"
 // vertex) because that one declares `uniform vec2 scale;`, which collides with effects that
 // have their own `scale` uniform ("Types of uniform 'scale' differ between VERTEX and FRAGMENT
-// shaders"). Effects address pixels via gl_FragCoord, so no varying is needed. EffectRenderer
-// binds its fullscreen quad to the `position` attribute; we map it straight to clip space —
-// gl_FragCoord then spans the bound target identically to the reference fullscreen triangle.
-const FULLSCREEN_VS = '#version 300 es\nprecision highp float;\nin vec2 position;\nvoid main(){ gl_Position = vec4(position, 0.0, 1.0); }\n'
+// shaders"). Most effects address pixels via gl_FragCoord, but a few sample a `v_texCoord`
+// varying (the reference DEFAULT_VERTEX_SHADER), so we emit it too (= position*0.5+0.5, same as
+// the reference; harmless/unused for the others). EffectRenderer binds its fullscreen quad to
+// the `position` attribute; gl_FragCoord then spans the bound target identically to the
+// reference fullscreen triangle, and v_texCoord spans [0,1] identically.
+const FULLSCREEN_VS = '#version 300 es\nprecision highp float;\nin vec2 position;\nout vec2 v_texCoord;\nvoid main(){ v_texCoord = position * 0.5 + 0.5; gl_Position = vec4(position, 0.0, 1.0); }\n'
 
 // rgba8/rgba16f/rgba32f/r8/r16f/r32f → Babylon { type, format } (mirrors webgl2 resolveFormat)
 function resolveFormat (format) {

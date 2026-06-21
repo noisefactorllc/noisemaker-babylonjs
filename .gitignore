@@ -12,3 +12,6 @@ examples/demo.fatgraph.json
 # parity transient outputs — keep the reused reference goldens only
 parity/out/*
 !parity/out/*.golden.png
+
+# transient parity manifests
+parity/_*.manifest
