@@ -71,6 +71,12 @@ function parseUniforms (source) {
   return { uniformTypes, samplerNames, uniformNames: Object.keys(uniformTypes) }
 }
 
+// Guarantee `#version 300 es` is first (+ highp precision) so Babylon takes the GLSL ES3 path
+// and skips its ES1->ES3 migration. Shared by fragment and custom vertex (deposit) shaders.
+function ensureVersion (src) {
+  return '#version 300 es\nprecision highp float;\nprecision highp int;\n' + src.replace(/^[ \t]*#version[^\n]*$/m, '')
+}
+
 // parseGlobalName — verbatim from webgl2.js (global_<name> and camelCase global<Name>).
 function parseGlobalName (texId) {
   if (typeof texId !== 'string') return null
@@ -105,6 +111,12 @@ export class BabylonBackend {
   static isAvailable () { return true }
 
   async init () {
+    // Raw WebGL2 context for the GPGPU paths (MRT FBOs + points/billboards draws) that don't
+    // map onto Babylon's high-level draw API. Babylon still owns resource creation + shader
+    // compile; these are the same operations webgl2.js does, on the same context.
+    this.gl = this.engine._gl
+    this._emptyVAO = this.gl.createVertexArray() // no attributes — points draws use gl_VertexID
+    this._mrtFbos = new Map() // cacheKey -> WebGLFramebuffer
     // 1x1 transparent-black default (matches webgl2 defaultTexture for unbound/none inputs).
     const internal = this.engine.createRawTexture(
       new Uint8Array([0, 0, 0, 0]), 1, 1, Constants.TEXTUREFORMAT_RGBA,
@@ -216,15 +228,19 @@ export class BabylonBackend {
 
     const rawSource = spec.source || spec.glsl || spec.fragment
     if (!rawSource) throw new Error(`Shader source missing for program '${id}'.`)
-    // Guarantee `#version 300 es` is the FIRST directive. Babylon uses it to take the GLSL ES3
-    // path and SKIP its ES1->ES3 migration; without it (90/247 reference shaders omit the line —
-    // the reference backend prepends it in injectDefines) Babylon mangles our ES3 source and
-    // injects a conflicting `layout(location=0) out vec4 glFragColor;` alongside `out vec4
-    // fragColor;`. So strip any existing version and prepend version + highp precision (PCG
-    // needs highp int), exactly like webgl2.injectDefines. Defines go via the `defines` option.
-    const body = rawSource.replace(/^[ \t]*#version[^\n]*$/m, '')
-    const cleaned = '#version 300 es\nprecision highp float;\nprecision highp int;\n' + body
-    const { uniformTypes, samplerNames, uniformNames } = parseUniforms(cleaned)
+    // ensureVersion(): `#version 300 es` must be first so Babylon takes the GLSL ES3 path and
+    // skips its ES1->ES3 migration (which mangles ES3 source + injects a conflicting glFragColor).
+    const cleaned = ensureVersion(rawSource)
+    // Points/agent deposit passes ship a custom vertex (texture-fetch + gl_VertexID); all other
+    // passes use the shared fullscreen vertex.
+    const hasCustomVertex = !!spec.vertex
+    const vsource = hasCustomVertex ? ensureVersion(spec.vertex) : FULLSCREEN_VS
+    // Uniforms/samplers may live in EITHER stage (a deposit vertex declares xyzTex/resolution).
+    const fu = parseUniforms(cleaned)
+    const vu = parseUniforms(vsource)
+    const uniformTypes = { ...vu.uniformTypes, ...fu.uniformTypes }
+    const samplerNames = [...new Set([...vu.samplerNames, ...fu.samplerNames])]
+    const uniformNames = Object.keys(uniformTypes)
     const defines = spec.defines && Object.keys(spec.defines).length
       ? Object.entries(spec.defines).map(([k, v]) => `#define ${k} ${v}`)
       : null
@@ -236,14 +252,14 @@ export class BabylonBackend {
       useAsPostProcess: false,
       allowEmptySourceTexture: true,
       shaderLanguage: ShaderLanguage.GLSL,
-      vertexShader: FULLSCREEN_VS,
+      vertexShader: vsource,
       fragmentShader: cleaned,
       uniformNames,
       samplerNames,
       defines
     })
 
-    const rec = { wrapper, uniformTypes, samplerSet: new Set(samplerNames) }
+    const rec = { wrapper, uniformTypes, samplerSet: new Set(samplerNames), hasCustomVertex }
     // Bind inputs + uniforms at draw time (onApply fires after enableEffect, before draw).
     wrapper.onApplyObservable.add(() => {
       if (!this._bindPass || this._bindPass.__copySrc) return
@@ -291,37 +307,120 @@ export class BabylonBackend {
 
     const outputKeys = Object.keys(effectivePass.outputs || {})
     const isMRT = effectivePass.drawBuffers > 1 || outputKeys.length > 1
-    if (isMRT) {
-      // MRT (agent/3D state passes) — staged; not used by the single-pass Tier-1 corpus.
-      console.warn(`[BabylonBackend] MRT pass ${effectivePass.id} skipped (staged)`)
-      return
-    }
+    const dm = effectivePass.drawMode
 
-    let outputId = effectivePass.outputs?.color || Object.values(effectivePass.outputs || {})[0]
-    const gname = parseGlobalName(outputId)
-    if (gname && state.writeSurfaces && state.writeSurfaces[gname]) outputId = state.writeSurfaces[gname]
+    // GPGPU scatter draws (agent deposit): custom vertex + gl_VertexID + empty VAO.
+    if (dm === 'points' || dm === 'billboards') return this._executePoints(effectivePass, prog, state, dm)
+    // Multiple render targets (agent state / 3D volume precompute): fullscreen into N attachments.
+    if (isMRT) return this._executeMRT(effectivePass, prog, state, outputKeys)
+    // Mesh raster (triangles, depth+cull) — staged (render/meshRender).
+    if (dm === 'triangles') { console.warn(`[BabylonBackend] drawMode 'triangles' (mesh) staged: ${effectivePass.id}`); return }
+
+    // Single-output fullscreen (the proven 2D path).
+    const outputId = this._resolveOutputId(effectivePass.outputs?.color ?? Object.values(effectivePass.outputs || {})[0], state)
     const outRec = this.textures.get(outputId)
-    if (!outRec) {
-      console.warn(`[BabylonBackend] output texture not found: ${outputId} (pass ${effectivePass.id})`)
-      return
-    }
-
-    // Blend (mirrors webgl2 executePass).
+    if (!outRec) { console.warn(`[BabylonBackend] output texture not found: ${outputId} (pass ${effectivePass.id})`); return }
     this.engine.setAlphaMode(this._resolveAlphaMode(effectivePass.blend))
-
-    // drawMode points/billboards/triangles are 3D/agent paths — staged. Default = fullscreen.
-    if (effectivePass.drawMode && effectivePass.drawMode !== 'triangles') {
-      console.warn(`[BabylonBackend] drawMode '${effectivePass.drawMode}' staged (pass ${effectivePass.id})`)
-      this.engine.setAlphaMode(Constants.ALPHA_DISABLE)
-      return
-    }
-
     this._bindPass = effectivePass
     this._bindState = state
     this.effectRenderer.render(prog.wrapper, outRec.rtw)
     this._bindPass = null
     this._bindState = null
     this.engine.setAlphaMode(Constants.ALPHA_DISABLE)
+  }
+
+  // global_<name> output resolves to the current write buffer; non-global ids pass through.
+  _resolveOutputId (rawId, state) {
+    const g = parseGlobalName(rawId)
+    if (g && state.writeSurfaces && state.writeSurfaces[g]) return state.writeSurfaces[g]
+    return rawId
+  }
+
+  _glTexOf (rec) { return rec?.internal?._hardwareTexture?.underlyingResource || null }
+
+  // MRT: fullscreen draw into N color attachments (agent state writes / 3D volume precompute).
+  // Mirrors webgl2 createMRTFBO + the MRT executePass branch; attachment index = output key order.
+  _executeMRT (pass, prog, state, outputKeys) {
+    const gl = this.gl
+    const texes = []
+    const ids = []
+    let viewportRec = null
+    for (const key of outputKeys) {
+      const id = this._resolveOutputId(pass.outputs[key], state)
+      const rec = this.textures.get(id)
+      ids.push(id)
+      if (rec) { texes.push(this._glTexOf(rec)); if (!viewportRec) viewportRec = rec }
+    }
+    if (!texes.length || texes.some(t => !t)) { console.warn(`[BabylonBackend] MRT ${pass.id}: missing output texture`); return }
+
+    const cacheKey = `${pass.id}:${ids.join(',')}`
+    let fbo = this._mrtFbos.get(cacheKey)
+    if (!fbo) {
+      fbo = gl.createFramebuffer()
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo)
+      const bufs = []
+      for (let i = 0; i < texes.length; i++) { gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, texes[i], 0); bufs.push(gl.COLOR_ATTACHMENT0 + i) }
+      gl.drawBuffers(bufs)
+      this._mrtFbos.set(cacheKey, fbo)
+    } else {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo)
+      // Reattach (write buffers ping-pong each frame, so the cached FBO's attachments rotate).
+      const bufs = []
+      for (let i = 0; i < texes.length; i++) { gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, texes[i], 0); bufs.push(gl.COLOR_ATTACHMENT0 + i) }
+      gl.drawBuffers(bufs)
+    }
+    gl.viewport(0, 0, viewportRec.width, viewportRec.height)
+    this.engine.setAlphaMode(this._resolveAlphaMode(pass.blend))
+    this._drawFullscreenInto(prog, pass, state)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+    this.engine.setAlphaMode(Constants.ALPHA_DISABLE)
+    this.engine.wipeCaches(true)
+  }
+
+  // Draw the fullscreen quad with prog's effect into the currently-bound framebuffer.
+  _drawFullscreenInto (prog, pass, state) {
+    const effect = prog.wrapper.effect
+    this.engine.enableEffect(prog.wrapper.drawWrapper)
+    this._bindInputs(pass, prog, effect, state)
+    this._bindUniforms(pass, prog, effect, state)
+    this.effectRenderer.bindBuffers(effect)
+    this.effectRenderer.draw()
+  }
+
+  // points/billboards deposit: enable the custom-vertex effect, bind the single accumulator
+  // target + additive blend, and draw `count` vertices with no buffers (gl_VertexID drives it).
+  _executePoints (pass, prog, state, drawMode) {
+    const gl = this.gl
+    const outputId = this._resolveOutputId(pass.outputs?.color ?? Object.values(pass.outputs || {})[0], state)
+    const outRec = this.textures.get(outputId)
+    if (!outRec) { console.warn(`[BabylonBackend] points ${pass.id}: no output ${outputId}`); return }
+    const count = this._pointCount(pass, state)
+    if (!count) return
+    this.engine.bindFramebuffer(outRec.rtw) // bind FBO + viewport; deposit accumulates (no clear)
+    this.engine.setAlphaMode(this._resolveAlphaMode(pass.blend))
+    const effect = prog.wrapper.effect
+    this.engine.enableEffect(prog.wrapper.drawWrapper)
+    this._bindInputs(pass, prog, effect, state)
+    this._bindUniforms(pass, prog, effect, state)
+    gl.bindVertexArray(this._emptyVAO)
+    gl.drawArrays(drawMode === 'billboards' ? gl.TRIANGLES : gl.POINTS, 0, drawMode === 'billboards' ? count * 6 : count)
+    gl.bindVertexArray(null)
+    this.engine.unBindFramebuffer(outRec.rtw)
+    this.engine.setAlphaMode(Constants.ALPHA_DISABLE)
+    this.engine.wipeCaches(true)
+  }
+
+  // count: number, or 'auto'/'screen'/'input' → texel count of the agent state texture (xyzTex).
+  _pointCount (pass, state) {
+    let count = pass.count ?? 1000
+    if (count === 'auto' || count === 'screen' || count === 'input') {
+      const stateId = pass.inputs?.xyzTex || pass.inputs?.inputTex
+      const g = parseGlobalName(stateId)
+      const rec = g ? (state.surfaces?.[g] || this.textures.get(this._resolveOutputId(stateId, state))) : this.textures.get(stateId)
+      const w = rec?.width; const h = rec?.height
+      count = (w && h) ? w * h : 0
+    }
+    return Math.max(0, count | 0)
   }
 
   _executeBlit (pass, state) {

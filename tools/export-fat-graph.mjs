@@ -77,10 +77,12 @@ async function bootstrap () {
       for (const pass of (instance.passes || [])) {
         const prog = pass.program
         if (!prog) continue
-        const f = join(glslDir, `${prog}.glsl`)
-        if (existsSync(f)) {
-          (instance.shaders[prog] ??= {}).glsl = readFileSync(f, 'utf8')
-        }
+        const bucket = (instance.shaders[prog] ??= {})
+        // Combined `.glsl` fragment, plus optional separate `.vert` (points/agent draws need a
+        // custom vertex shader) and `.frag` (the {v,f} split form). Mirrors loadEffectShaders.
+        const g = join(glslDir, `${prog}.glsl`); if (existsSync(g)) bucket.glsl = readFileSync(g, 'utf8')
+        const v = join(glslDir, `${prog}.vert`); if (existsSync(v)) bucket.vertex = readFileSync(v, 'utf8')
+        const fr = join(glslDir, `${prog}.frag`); if (existsSync(fr)) bucket.fragment = readFileSync(fr, 'utf8')
       }
 
       const func = instance.func || name
@@ -134,6 +136,7 @@ function fatten (graph) {
   for (const [id, p] of Object.entries(graph.programs || {})) {
     programs[id] = {
       glsl: p.glsl,
+      vertex: p.vertex,
       fragment: p.fragment,
       source: p.source,
       uniformLayout: p.uniformLayout || {},
