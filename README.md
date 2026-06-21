@@ -18,15 +18,24 @@ render graph; here it goes one level deeper — the backend interface. See
 
 ## Parity
 
-**149 / 152 renderable-2D effects pixel-identical at strict tolerance** (max-abs-diff ≤ 2, most
-exactly 0), graded against the byte-identical reference WebGL2 goldens. Because the candidate
-renders on the same WebGL2/ANGLE/Metal driver as the golden, **no effect needs the relaxed
-per-effect tolerances the Metal-backed Unity/Godot/TD ports required** — and the continuous solvers
-`reactionDiffusion` + `navierStokes`, which those ports document as cross-backend-divergent skips,
-**pixel-parity byte-identically here** when evolved ~30s to a deterministic steady state. The 3
-skips are external-input effects (media/text/remap). The **10 points/agent sims** (physarum, life,
-flock, …) render correctly via the MRT + points executor (162 programs render, 0 errors) but aren't
-strict-graded (chaotic deposit sims). Remaining staged: 3D-volume raymarch + mesh + cubemap.
+**159 effects BYTE-IDENTICAL to the reference** (max-abs-diff 0): 149 renderable-2D effects + all
+10 agent/points sims (physarum, life, flock, dla, lenia, …) + the continuous solvers
+`reactionDiffusion`/`navierStokes`. Because the candidate renders on the same WebGL2/ANGLE/Metal
+driver as the golden, parity is exact — **no effect needs the relaxed tolerances the Metal-backed
+Unity/Godot/TD ports required**, and the stateful/continuous effects converge to a bit-identical
+steady state when evolved ~30s. Only 3 effects are skipped (media/text/remap — external
+MIDI/glyph/projection inputs).
+
+**End-to-end:** the complex emergent test program (3D perlin → 1M-agent flow-field particles
+[MRT+points+billboards] → blur → navierStokes ×40 → palette/lighting/adjust/bloom/lens/vignette) is
+byte-identical at every 5s sample over 30s. And the **live NoiseBLASTER! corpus** — 19 real shared
+compositions fetched from `blaster.noisedeck.app` — is **19/19 byte-identical** (`parity/corpus/`).
+
+Remaining staged: synth3d 3D-volume raymarch + mesh + cubemap (Tier-4, as in all sibling ports).
+
+> The one load-bearing engine quirk (the kind every cross-engine port hits): the additive particle
+> deposit must use raw `blendFunc(ONE, ONE)`; Babylon's `setAlphaMode(ALPHA_ADD)` is `(SRC_ALPHA,
+> ONE)`, which crushes the HDR trail accumulation. See PORTING-GUIDE.md.
 
 ```bash
 npm install                                   # @babylonjs/core + dev tooling

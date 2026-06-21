@@ -75,25 +75,31 @@ byte-identical). The Babylon candidate renders the reused reference `Pipeline` +
 in **headless Chromium on ANGLE/Metal — the same WebGL2 driver the golden was rendered on** (a
 real GPU; `NullEngine` does no GPU work). `parity/compare.py` grades max-abs-diff + SSIM.
 
-**Result: 149 / 152 renderable-2D effects pass at the strict default (max-diff ≤ 2.001), zero
-needing the relaxed tolerances the Metal-backed godot/td ports required** — because candidate and
-golden share the WebGL2/ANGLE/Metal driver, parity is byte-tight (most effects max-diff 0). This
-**includes the continuous solvers `reactionDiffusion` + `navierStokes`**, which every Metal-backed
-sibling port documents as cross-backend-divergent skips but which pixel-parity BYTE-IDENTICALLY
-here when evolved ~30s to a deterministic steady-state attractor (the `EVOLVE` map in
-`render-batch.mjs`). The 3 skips are external-input effects (media/text/remap need MIDI/glyph/
-projection sources). Beyond 2D, the **10 points/agent sims** (physarum, life, flock, …) render
-correctly via the MRT + points-deposit executor (162 programs render, 0 errors) but are
-render-verified-only: their points-deposit additive float blend is fp-order-sensitive and their
-chaotic trajectories amplify it (unlike the field solvers, which converge bit-exact).
+**Result: 159 effects BYTE-IDENTICAL to the reference** (max-diff 0) — 149 renderable-2D effects +
+all 10 agent/points sims (physarum, life, flock, dla, lenia, …) + the continuous solvers
+`reactionDiffusion`/`navierStokes`. Because candidate and golden share the WebGL2/ANGLE/Metal
+driver, parity is exact — **zero effects need the relaxed tolerances the Metal-backed godot/td
+ports required**, and the stateful/continuous effects converge to a bit-identical steady state when
+evolved ~30s (the `EVOLVE` map in `render-batch.mjs`). Only 3 effects are skipped (media/text/remap
+— external MIDI/glyph/projection inputs).
+
+**End-to-end validation.** The complex emergent test program (3D perlin → 1M-agent flow-field
+particles [MRT+points+billboards] → blur → navierStokes ×40 → palette/lighting/adjust/bloom/lens/
+vignette) is byte-identical at every 5s sample over 30s. The **live NoiseBLASTER! corpus** —
+19 real shared compositions fetched from `blaster.noisedeck.app` (`parity/corpus/`) — is
+**19/19 byte-identical**. The one load-bearing fix that unlocked the agent sims + corpus was the
+additive deposit blend: raw `blendFunc(ONE,ONE)`, not Babylon's `ALPHA_ADD` (= `SRC_ALPHA, ONE`,
+which crushes HDR trail accumulation) — see PORTING-GUIDE.md.
 
 ## Status & staged work
 
-- DONE: compiler + pipeline reuse, `BabylonBackend` (single-output render, multi-pass, filters,
-  2-/3-input mixers, blit, blend, uniforms, half-float, readback), `NoisemakerRenderer`, the
-  87-program parity sweep, a Babylon example scene.
-- STAGED: MRT + `drawMode:points` agent effects, 3D volumes/raymarch/meshes, the WebGPU path
-  (same shaders via Babylon's GLSL→WGSL), and vendoring the reference engine for a standalone
-  published package (today the parity harness + example import the sibling reference by path).
+- DONE: compiler + pipeline reuse; `BabylonBackend` (fullscreen render, multi-pass, filters,
+  2-/3-input mixers, blit, blend, uniforms, half-float, readback, **MRT, points/billboards-deposit
+  agent sims**); `NoisemakerRenderer`; the 159-effect parity sweep + the live-corpus harness; a
+  Babylon example scene. 159 effects + the test target + 19/19 corpus all byte-identical.
+- STAGED: synth3d 3D-volume raymarch (`render3d`/`renderLit3d`), `meshRender` raster, cubemap
+  orchestration (Tier-4, highest-effort/lowest-parity, as in all sibling ports); the WebGPU path
+  (same shaders via Babylon's GLSL→WGSL); vendoring the reference engine for a standalone published
+  package (today the parity harness + example import the sibling reference by path).
 
 Local-only; **not pushed**. Commits omit the `Co-Authored-By` trailer.

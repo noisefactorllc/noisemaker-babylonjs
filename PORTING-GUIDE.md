@@ -35,6 +35,33 @@ hazards below were all load-bearing; each is handled once in `BabylonBackend`, n
    program and `await` readiness (`effect.isReady()`, polled) before the frame loop — otherwise a
    synchronous pass draws nothing and you get an all-zero (alpha 0) surface.
 
+6. **The additive particle deposit MUST be raw `blendFunc(ONE, ONE)`.** Babylon's
+   `setAlphaMode(ALPHA_ADD)` is `(SRC_ALPHA, ONE)` — it scales each deposit by its own alpha and
+   *crushes the HDR trail accumulation* (dim, low-contrast agent sims). This is the highest-impact
+   bug: it silently poisons every points/agent effect (physarum, flow, life, …) and any program
+   that uses them. `_executePoints` sets the blend with raw `gl.blendFunc` (matching `webgl2.js`'s
+   `resolveBlendFactor`: array → `blendFunc(src,dst)`; truthy → additive `ONE,ONE`) — safe because
+   the deposit is a raw `gl.drawArrays`, not a Babylon-managed draw. With this fix all 10 agent
+   sims + the live-corpus emergent stacks are byte-identical. (This is the "engine clamping/range"
+   class of issue every cross-engine port of these sims hits.)
+
+## The agent/points + MRT executor
+
+Beyond fullscreen passes, `BabylonBackend` runs the GPGPU paths via raw `engine._gl` (Babylon owns
+resource creation + shader compile; the draws mirror `webgl2.js` on the same context):
+- **MRT** (`_executeMRT`): a raw FBO from the surfaces' WebGL textures
+  (`internal._hardwareTexture.underlyingResource`), N color attachments in output-key order
+  (= shader `layout(location=N)`), fullscreen draw via `EffectRenderer.bindBuffers`+`draw` into the
+  bound FBO, `engine.wipeCaches(true)` after. Agent-state writes (`drawBuffers:3/4`) + 3D-volume
+  precompute (`drawBuffers:2`).
+- **points/billboards** (`_executePoints`): the deposit program ships a custom vertex
+  (`spec.vertex` — `gl_VertexID` + `texelFetch` of the state texture); compile it (parse uniforms
+  from both stages) and draw with an empty VAO, `gl.drawArrays(POINTS, count)` (billboards =
+  `TRIANGLES, count*6`), count from the `xyzTex` state texture, raw additive blend.
+- Surface formats are load-bearing: agent state is `rgba32f` (xyz/vel) + `rgba8` (rgba), trails are
+  `rgba16f`. A 16f→32f substitution breaks continuous accumulators. No staged effect uses a real 3D
+  texture — "3D" is a 2D atlas sampled via `texelFetch`.
+
 ## Parity invariants (same as the WebGL2 reference)
 
 - Render targets: linear **half-float RGBA** (`rgba16f`), **NEAREST** min/mag, **CLAMP_TO_EDGE**
