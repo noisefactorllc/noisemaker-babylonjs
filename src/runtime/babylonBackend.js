@@ -635,10 +635,12 @@ export class BabylonBackend {
         break
       }
       case 'mat3':
-        effect.setMatrix3x3(name, value)
+        // Babylon's setMatrix3x3 wants a Float32Array(9); the reference supplies plain arrays
+        // (e.g. cubeBasis = CUBE_FACE_BASES[face], the per-face camera basis in renderCubemap()).
+        effect.setMatrix3x3(name, value instanceof Float32Array ? value : new Float32Array(value))
         break
       case 'mat4':
-        effect.setMatrix(name, value)
+        effect.setMatrix(name, value instanceof Float32Array ? value : new Float32Array(value))
         break
       default:
         // ivecN / uintN / etc. — fall back to float-ish; extend as needed.

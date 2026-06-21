@@ -52,14 +52,16 @@ GPU operations and (b) Babylon not mangling the reused GLSL (see PORTING-GUIDE.m
   - Engine/system uniforms fed by name every pass: `resolution`, `time` (normalized 0..1, 10s
     loop), `tileOffset=[0,0]`, `fullResolution`, `aspectRatio`, `renderScale=1`, etc.
   - MRT, `drawMode:points|billboards` (agent deposit), 3D-volume raymarch (2D-atlas MRT passes),
-    single-face cubemaps, and the `drawMode:triangles` mesh raster are all **implemented + parity-
-    verified**. Only the 6-face cubemap *bake* (`renderCubemap()` host loop) and host OBJ loading
-    remain.
+    single-face AND 6-face-baked cubemaps, and the `drawMode:triangles` mesh raster are all
+    **implemented + parity-verified**. Only host OBJ loading for `meshLoader` remains.
 
 - **`src/runtime/renderer.js`** — `NoisemakerRenderer`, the consumer host. Takes a Babylon engine
   + the reference `Pipeline` class (injected), `loadGraph(fatGraph)`, `renderFrame(t)`, and
   exposes a **stable** output texture (`outputTexture` / `outputInternalTexture`) — the render
   surface is blitted into a dedicated texture each frame so a material can hold one reference.
+  Also `renderCubemap({size, outputSurface, time})` — bakes a cubemap composition into 6 faces (via
+  the reused `Pipeline.renderCubemap()`) AND a **Babylon-native cube `InternalTexture`**
+  (`cubeInternalTexture`) for skyboxes / PBR reflections.
 
 - **`tools/export-fat-graph.mjs`** — Node producer. Runs the unchanged reference `compileGraph`
   with each program's GLSL attached (filesystem edition of `canvas.js loadEffectShaders`), and
@@ -113,13 +115,13 @@ Babylon's `ALPHA_ADD` (= `SRC_ALPHA, ONE`, which crushes HDR trail accumulation)
 
 - DONE: compiler + pipeline reuse; `BabylonBackend` (fullscreen render, multi-pass, filters,
   2-/3-input mixers, blit, blend, uniforms, half-float, readback, **MRT, points/billboards-deposit
-  agent sims, 3D-volume raymarch + single-face cubemaps, `meshRender` triangle raster, `loopBegin`/
-  `loopEnd`, SMRTicles wrappers**); `NoisemakerRenderer`; the parity sweep (179/184 byte-identical) +
-  the live-corpus + mesh-raster harnesses; a Babylon example scene. The test target + 19/19 corpus all
-  byte-identical.
-- STAGED: the 6-face cubemap **bake** (`renderCubemap()` host loop — flagged WIP in the reference
-  itself); host-side OBJ loading for `meshLoader` (external geometry, like `media`'s external texture);
-  the WebGPU path (same shaders via Babylon's GLSL→WGSL); vendoring the reference engine for a
-  standalone published package (today the parity harness + example import the sibling reference by path).
+  agent sims, 3D-volume raymarch, `meshRender` triangle raster, `loopBegin`/`loopEnd`, SMRTicles
+  wrappers**); `NoisemakerRenderer` (+ `renderCubemap()` → 6-face bake to a Babylon cube texture); the
+  parity sweep (179/184 byte-identical) + the live-corpus + mesh-raster + cubemap-bake harnesses; two
+  Babylon example scenes (procedural texture, baked-cubemap skybox). The test target + 19/19 corpus +
+  all 6 cube faces byte-identical.
+- STAGED: host-side OBJ loading for `meshLoader` (external geometry, like `media`'s external texture);
+  vendoring the reference engine for a standalone published package (today the parity harness + example
+  import the sibling reference by path). (WebGPU dropped — the WebGL2 shader path is the deliverable.)
 
 Local-only; **not pushed**. Commits omit the `Co-Authored-By` trailer.

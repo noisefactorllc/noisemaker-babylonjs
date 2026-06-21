@@ -72,9 +72,14 @@ power:2}` / `'screen'` / `'resolution'` dims to **numbers before** calling `back
 (so the Babylon backend just sees a 64×4096 target). The synth3d *precompute* and the render3d
 *raymarch* are both fullscreen `drawBuffers:2` MRT passes (`{color, geoOut}`) that `_executeMRT`
 already runs; shaders index the atlas with `texelFetch(volumeCache, ivec2(x, y + z·volSize))`.
-`createTexture3D` is never called. The 6-face cubemap **bake** (`renderCubemap()`) is host
-orchestration (a per-face `setUniform('cubeBasis', …)` + `render` + `readPixels` loop) and is flagged
-WIP in the reference itself — only the per-face raymarch is validated here.
+`createTexture3D` is never called. The 6-face cubemap **bake** also needed no backend work: the reused
+`Pipeline.renderCubemap()` (a per-face `setUniform('cubeBasis', mat3)` + `render` + `readPixels` loop)
+drives the BabylonBackend directly — the only fix was coercing the mat3 uniform to a `Float32Array`
+(`CUBE_FACE_BASES[face]` is a plain array; Babylon's `setMatrix3x3` wants a typed array). All 6 faces
+are byte-identical for both renderers (`parity/cubemap-bake-check.mjs`). `NoisemakerRenderer.renderCubemap()`
+wraps that loop and bakes the faces into a **Babylon-native cube `InternalTexture`** via
+`engine.createRawCubeTexture` (Babylon's cube face order +X,-X,+Y,-Y,+Z,-Z matches the reference's, so
+the 6 buffers drop straight in) — a skybox / PBR reflection, demoed in `examples/cubemap.html`.
 
 ## The mesh triangle raster (the one genuinely new pass type)
 
@@ -134,12 +139,11 @@ to 0..255, flip rows bottom-up→top-down. Result: **86/87 pass at strict `max-d
 ## Remaining staged pass types
 
 MRT (`pass.drawBuffers>1` / multiple `outputs`), `drawMode:'points'|'billboards'` (agent deposit),
-`drawMode:'triangles'` (mesh raster), 3D-volume raymarch, and single-face cubemaps are all
-implemented in `executePass` and parity-verified (179/184 byte-identical). What's left:
-- **6-face cubemap bake** — `renderCubemap()` is a host-level loop (per-face `setUniform('cubeBasis')`
-  + `render` + `readPixels`) that the reused reference `Pipeline` already provides; it would slot into
-  `NoisemakerRenderer`. Flagged WIP in the reference, so its golden path may be unstable.
+`drawMode:'triangles'` (mesh raster), 3D-volume raymarch, single-face cubemaps, AND the 6-face
+cubemap bake (`NoisemakerRenderer.renderCubemap()`) are all implemented and parity-verified
+(179/184 byte-identical; all 6 cube faces byte-identical). What's left:
 - **Host OBJ loading for `meshLoader`** — parse `share/meshes/*.obj` and upload to the mesh surfaces
   (a `NoisemakerRenderer` concern, like wiring an external texture for `media`). The raster it feeds
   is already proven.
-- **WebGPU** — the same reused GLSL via Babylon's GLSL→WGSL translation.
+- **Vendoring** the reference engine for a standalone published package (today the harness + examples
+  import the sibling reference by path).

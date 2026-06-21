@@ -111,6 +111,29 @@ window.nmRunFatGraph = async function (fat, opts = {}) {
   return out
 }
 
+// Cubemap bake: drive the REUSED Pipeline.renderCubemap() (6-face loop — per face it sets the
+// cubeBasis mat3, renders, reads back the output surface) through the BabylonBackend. No new backend
+// code: setUniform('cubeBasis', mat3) lands in pass.uniforms → _bindUniforms → setMatrix3x3, and the
+// per-face raymarch is the same MRT pass already proven byte-identical. Returns 6 faces in GL order
+// (+X,-X,+Y,-Y,+Z,-Z), each { width, height, data } RGBA8 top-down (backend.readPixels).
+window.nmRunCubemap = async function (fat, opts = {}) {
+  const size = opts.size || 256
+  const time = (opts.time ?? 0.25)
+  const outputSurface = opts.outputSurface || fat.renderSurface || 'o0'
+  const canvas = document.createElement('canvas')
+  canvas.width = size; canvas.height = size
+  document.body.appendChild(canvas)
+  const engine = new Engine(canvas, false, { preserveDrawingBuffer: true, premultipliedAlpha: false, alpha: false, stencil: false, antialias: false, powerPreference: 'high-performance' }, false)
+  const backend = new BabylonBackend(engine)
+  const graph = reconstruct(fat)
+  const pipeline = new Pipeline(graph, backend)
+  await pipeline.init(size, size)
+  const faces = await pipeline.renderCubemap({ size, outputSurface, time })
+  const out = { faces: faces.map(f => ({ width: f.width, height: f.height, data: Array.from(f.data) })) }
+  try { engine.dispose(); canvas.remove() } catch { /* noop */ }
+  return out
+}
+
 // Same render, but driven through the consumer-facing NoisemakerRenderer host (loadGraph →
 // renderFrame → stable output texture → readPixels). Proves the integration surface is itself
 // pixel-parity, not just the raw backend path.
@@ -127,6 +150,26 @@ window.nmRunViaRenderer = async function (fat, opts = {}) {
   for (let i = 0; i < frames; i++) nm.renderFrame(time)
   const px = await nm.readPixels()
   const out = { width: px.width, height: px.height, data: Array.from(px.data) }
+  try { nm.dispose(); engine.dispose(); canvas.remove() } catch { /* noop */ }
+  return out
+}
+
+// Cubemap bake through the consumer host (NoisemakerRenderer.renderCubemap) — proves the public
+// API bakes a real Babylon-native cube InternalTexture, not just the bare Pipeline path.
+window.nmRunCubemapViaRenderer = async function (fat, opts = {}) {
+  const size = opts.size || 256
+  const time = (opts.time ?? 0.25)
+  const canvas = document.createElement('canvas')
+  canvas.width = size; canvas.height = size
+  document.body.appendChild(canvas)
+  const engine = new Engine(canvas, false, { preserveDrawingBuffer: true, premultipliedAlpha: false, alpha: false, stencil: false }, false)
+  const nm = new NoisemakerRenderer(engine, { Pipeline, size })
+  await nm.loadGraph(fat)
+  const { faces, cubeTexture } = await nm.renderCubemap({ size, time, outputSurface: opts.outputSurface })
+  const out = {
+    faces: faces.map(f => ({ width: f.width, height: f.height, data: Array.from(f.data) })),
+    cube: { isCube: !!cubeTexture?.isCube, width: cubeTexture?.width ?? null, isReady: !!cubeTexture?.isReady }
+  }
   try { nm.dispose(); engine.dispose(); canvas.remove() } catch { /* noop */ }
   return out
 }

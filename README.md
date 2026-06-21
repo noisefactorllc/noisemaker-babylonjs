@@ -40,11 +40,17 @@ back-face-culled, Blinn-Phong-lit sphere, max-abs-diff 0).
 byte-identical at every 5s sample over 30s. And the **live NoiseBLASTER! corpus** — 19 real shared
 compositions fetched from `blaster.noisedeck.app` — is **19/19 byte-identical** (`parity/corpus/`).
 
-The 3D-volume raymarch + single-face cubemap fell out of the *existing* MRT path with **zero new
-backend code** (the "volume" is a 2D atlas the Pipeline sizes to 64×4096, sampled via `texelFetch`).
-The only new backend code was the mesh `drawMode:'triangles'` raster (depth buffer + back-face cull +
-`gl_VertexID` geometry fetch). Remaining: the 6-face cubemap *bake* (`renderCubemap()` host
-orchestration — flagged WIP in the reference itself).
+The 3D-volume raymarch + cubemaps fell out of the *existing* MRT path with **zero new backend code**
+(the "volume" is a 2D atlas the Pipeline sizes to 64×4096, sampled via `texelFetch`). The only new
+backend code was the mesh `drawMode:'triangles'` raster (depth buffer + back-face cull + `gl_VertexID`
+geometry fetch).
+
+**Cubemap bake.** `NoisemakerRenderer.renderCubemap()` drives the reused `Pipeline.renderCubemap()`
+6-face loop and bakes the faces into a **Babylon-native cube texture** (the parallel of the HLSL
+port's Unity-native cubemap) — usable directly as a skybox / PBR reflection. **All 6 faces are
+byte-identical to the reference** for both `renderCubemapSurface` and `renderCubemap3d`
+(`parity/cubemap-bake-check.mjs`), and `examples/cubemap.html` renders a live skybox + reflective
+sphere from a baked noise volume.
 
 > The one load-bearing engine quirk (the kind every cross-engine port hits): the additive particle
 > deposit must use raw `blendFunc(ONE, ONE)`; Babylon's `setAlphaMode(ALPHA_ADD)` is `(SRC_ALPHA,
@@ -85,9 +91,11 @@ render(o0)" demo.fatgraph.json
 ### Example
 
 ```bash
-NM_REFERENCE_ROOT=../noisemaker node examples/build.mjs   # bundle + generate demo.fatgraph.json
-# open examples/index.html  (a Noisemaker effect as a live texture on a spinning box)
-node examples/verify.mjs                                  # headless render check
+NM_REFERENCE_ROOT=../noisemaker node examples/build.mjs   # bundle both demos + generate fat graphs
+# open examples/index.html    (a Noisemaker effect as a live texture on a spinning box)
+# open examples/cubemap.html  (a baked Noisemaker cubemap as a skybox + reflective sphere)
+node examples/verify.mjs                                  # headless render check (procedural texture)
+node examples/verify-cubemap.mjs                          # headless render check (baked skybox)
 ```
 
 ## Layout
@@ -107,11 +115,10 @@ docs/IMPLEMENTATION-PLAN.md     the phased build plan
 Single-output render, multi-pass (e.g. blur H/V), input filters, 2-/3-input mixers, blit, blend,
 half-float, readback, **MRT, `drawMode:points|billboards` agent deposits, 3D-volume raymarch,
 single-face cubemaps, the `meshRender` triangle raster (depth+cull), `loopBegin`/`loopEnd`, and the
-SMRTicles wrappers** are all done and parity-verified (179/184 byte-identical). **Remaining:** the
-6-face cubemap bake (`renderCubemap()` host loop — WIP upstream), host-side OBJ loading for
-`meshLoader` (external geometry, like `media`'s external texture), the WebGPU path (same shaders via
-Babylon's GLSL→WGSL), and vendoring the reference engine for a standalone published package.
-Local-only; not pushed. See PORTING-GUIDE.md.
+SMRTicles wrappers, and the 6-face cubemap bake → Babylon-native cube texture** are all done and
+parity-verified (179/184 byte-identical; all 6 cube faces byte-identical). **Remaining:** host-side
+OBJ loading for `meshLoader` (external geometry, like `media`'s external texture) and vendoring the
+reference engine for a standalone published package. Local-only; not pushed. See PORTING-GUIDE.md.
 
 ## License
 

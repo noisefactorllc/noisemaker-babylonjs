@@ -21,3 +21,5 @@ parity/corpus/raw/
 parity/corpus/programs/
 parity/programs/corpus_*.dsl
 parity/out/corpus_*
+examples/cubemap-bundle.js
+examples/demo.cubemap.fatgraph.json

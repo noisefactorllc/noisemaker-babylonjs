@@ -6,6 +6,7 @@
 // this module stays decoupled from the reference repo layout: a host bundles the reference
 // runtime (or a vendored copy) and passes the class in. See examples/ for a wired demo.
 
+import { Constants } from '@babylonjs/core/Engines/constants.js'
 import { BabylonBackend } from './babylonBackend.js'
 
 // Fat graph (tools/export-fat-graph.mjs) -> the runtime graph shape Pipeline consumes.
@@ -97,11 +98,48 @@ export class NoisemakerRenderer {
   /** Read the current output as top-down linear 8-bit RGBA (parity/export use). */
   async readPixels () { return this.backend.readPixels(this._outId) }
 
+  /**
+   * Bake the loaded composition into a cubemap. The graph must end in a cubemap renderer
+   * (`renderCubemapSurface`/`renderCubemap3d`) writing to `outputSurface`. Drives the reused
+   * `Pipeline.renderCubemap()` (6-face loop: per face it sets the `cubeBasis` camera basis,
+   * renders, and reads back the surface), then bakes the faces into a **Babylon-native cube
+   * `InternalTexture`** — the parallel of the HLSL port's Unity-native cubemap. Where the reference
+   * hands back 6 CPU buffers, here you also get a GPU cube texture ready for a skybox / PBR
+   * reflection. Each backend renders its own faces, so this is byte-identical to the reference
+   * (verified in parity/cubemap-bake-check.mjs).
+   *
+   * @returns {Promise<{ faces: Array<{width:number,height:number,data:Uint8Array}>, cubeTexture: import('@babylonjs/core').InternalTexture }>}
+   *   faces in GL order (+X,-X,+Y,-Y,+Z,-Z), RGBA8 top-down; cubeTexture wraps them on the GPU.
+   */
+  async renderCubemap (opts = {}) {
+    if (!this.pipeline?.renderCubemap) throw new Error('NoisemakerRenderer.renderCubemap: the injected Pipeline has no renderCubemap() (update the reference engine).')
+    const size = opts.size || this.size
+    const outputSurface = opts.outputSurface || this.graph?.renderSurface || 'o0'
+    const time = opts.time ?? this._time
+    const faces = await this.pipeline.renderCubemap({ size, outputSurface, time })
+    // Babylon's cube face order is +X,-X,+Y,-Y,+Z,-Z — identical to the reference, so the 6 buffers
+    // drop straight in. invertY:false (readPixels already delivered top-down image rows).
+    const data = faces.map(f => (f.data instanceof Uint8Array ? f.data : Uint8Array.from(f.data)))
+    const cube = this.engine.createRawCubeTexture(
+      data, size, Constants.TEXTUREFORMAT_RGBA, Constants.TEXTURETYPE_UNSIGNED_BYTE,
+      false, false, Constants.TEXTURE_NEAREST_SAMPLINGMODE, null
+    )
+    if (this._cubeInternal && this._cubeInternal !== cube) { try { this._cubeInternal.dispose?.() } catch { /* noop */ } }
+    this._cubeInternal = cube
+    return { faces, cubeTexture: cube }
+  }
+
+  /** The raw cube `InternalTexture` from the last renderCubemap() — wrap in a scene `CubeTexture`:
+   *    const ct = new CubeTexture('', scene); ct._texture = nm.cubeInternalTexture; scene.reflectionTexture = ct; */
+  get cubeInternalTexture () { return this._cubeInternal ?? null }
+
   dispose () {
+    try { this._cubeInternal?.dispose?.() } catch { /* noop */ }
     try { this.backend?.destroy?.() } catch { /* noop */ }
     this.pipeline = null
     this.backend = null
     this._outputTexture = null
+    this._cubeInternal = null
   }
 }
 
