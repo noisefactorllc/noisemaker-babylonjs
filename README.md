@@ -18,22 +18,34 @@ render graph; here it goes one level deeper — the backend interface. See
 
 ## Parity
 
-**179 of 184 effects BYTE-IDENTICAL to the reference** (max-abs-diff 0) — the entire catalog except
-5 effects that need an external runtime input. That's 149 renderable-2D effects + all 10 agent/points
+**180 of 184 effects BYTE-IDENTICAL to the reference** (max-abs-diff 0) — the entire catalog except
+4 effects that need an external runtime input. That's 149 renderable-2D effects + all 10 agent/points
 sims (physarum, life, flock, dla, lenia, …) + the continuous solvers
 `reactionDiffusion`/`navierStokes` + the **full 3D-volume raymarch** chain (7 synth3d generators ×
 `render3d`/`renderLit3d`, isosurface & voxel, + `flow3d`/`palette3d`) + **single-face cubemaps**
 (`renderCubemapSurface`/`renderCubemap3d`) + the **SMRTicles render wrappers** (`pointsEmit`/
 `pointsRender`/`pointsBillboardRender`) + the **`loopBegin`/`loopEnd`** accumulator + the points-based
-`wormhole`. Because the candidate renders on the same WebGL2/ANGLE/Metal driver as the golden, parity
-is exact — **no effect needs the relaxed tolerances the Metal-backed Unity/Godot/TD ports required**,
-and stateful/continuous/agent effects converge to a bit-identical steady state when evolved ~30s.
+`wormhole` + the **`remap` polygon-zone router** (std140 UBO). Because the candidate renders on the
+same WebGL2/ANGLE/Metal driver as the golden, parity is exact — **no effect needs the relaxed
+tolerances the Metal-backed Unity/Godot/TD ports required**, and stateful/continuous/agent effects
+converge to a bit-identical steady state when evolved ~30s.
 
-The only 5 non-byte-identical effects all require an external source the headless harness can't supply:
-**media** (texture), **text** (glyphs), **remap** (projection), **roll** (MIDI), and **meshLoader**
-(OBJ geometry) — and even the mesh raster `meshRender` feeds from is **proven byte-identical** by
-injecting identical geometry into both engines (`parity/mesh-raster-check.mjs` — a depth-tested,
-back-face-culled, Blinn-Phong-lit sphere, max-abs-diff 0).
+**`remap` joined the byte-identical set** (it was mis-filed as external-input): its inputs are engine
+surfaces (`zone0_tex: read(o0)`), and it's the **sole** effect whose WebGL2 GLSL declares a
+`layout(std140) uniform` block — its 8-zone polygon config (267 vec4 slots) is uploaded as a packed
+**UBO**, a path the backend now mirrors from `webgl2.js` byte-for-byte (`extractUniformBlocks` +
+`packUniformsWithLayout`). Both the default `remap(bgColor:#336699)` and a non-trivial 2-zone routing
+config (`parity/programs/remap_zones.dsl` — a quad + a triangle routing two noise sources over the bg)
+are byte-identical. (~31 other effects *declare* a `uniformLayout` but use plain uniforms in WebGL2 —
+the layout is WGSL/fallback metadata — so the UBO bind is a no-op for them.)
+
+The 4 remaining non-byte-identical effects all require an external source the headless harness can't
+supply: **media** (texture), **text** (glyphs), **roll** (MIDI), and **meshLoader** (OBJ geometry).
+The mesh *raster* `meshLoader` would feed (`render/meshRender`, `drawMode:'triangles'`) is itself
+**proven byte-identical** by injecting identical geometry into both engines
+(`parity/mesh-raster-check.mjs` — a depth-tested, back-face-culled, Blinn-Phong-lit sphere,
+max-abs-diff 0), but the **`meshLoader` effect itself (host OBJ load → mesh surfaces) is not yet
+vetted**.
 
 **End-to-end:** the complex emergent test program (3D perlin → 1M-agent flow-field particles
 [MRT+points+billboards] → blur → navierStokes ×40 → palette/lighting/adjust/bloom/lens/vignette) is
@@ -41,9 +53,10 @@ byte-identical at every 5s sample over 30s. And the **live NoiseBLASTER! corpus*
 compositions fetched from `blaster.noisedeck.app` — is **19/19 byte-identical** (`parity/corpus/`).
 
 The 3D-volume raymarch + cubemaps fell out of the *existing* MRT path with **zero new backend code**
-(the "volume" is a 2D atlas the Pipeline sizes to 64×4096, sampled via `texelFetch`). The only new
-backend code was the mesh `drawMode:'triangles'` raster (depth buffer + back-face cull + `gl_VertexID`
-geometry fetch).
+(the "volume" is a 2D atlas the Pipeline sizes to 64×4096, sampled via `texelFetch`). The only two
+genuinely-new backend pieces were the mesh `drawMode:'triangles'` raster (depth buffer + back-face
+cull + `gl_VertexID` geometry fetch) and the std140 **UBO** upload path for `remap` (the sole effect
+with a `layout(std140)` block in WebGL2).
 
 **Cubemap bake.** `NoisemakerRenderer.renderCubemap()` drives the reused `Pipeline.renderCubemap()`
 6-face loop and bakes the faces into a **Babylon-native cube texture** (the parallel of the HLSL
@@ -115,10 +128,11 @@ docs/IMPLEMENTATION-PLAN.md     the phased build plan
 Single-output render, multi-pass (e.g. blur H/V), input filters, 2-/3-input mixers, blit, blend,
 half-float, readback, **MRT, `drawMode:points|billboards` agent deposits, 3D-volume raymarch,
 single-face cubemaps, the `meshRender` triangle raster (depth+cull), `loopBegin`/`loopEnd`, and the
-SMRTicles wrappers, and the 6-face cubemap bake → Babylon-native cube texture** are all done and
-parity-verified (179/184 byte-identical; all 6 cube faces byte-identical). **Remaining:** host-side
-OBJ loading for `meshLoader` (external geometry, like `media`'s external texture) and vendoring the
-reference engine for a standalone published package. Local-only; not pushed. See PORTING-GUIDE.md.
+SMRTicles wrappers, the 6-face cubemap bake → Babylon-native cube texture, and the `remap`
+polygon-zone router (std140 UBO)** are all done and parity-verified (180/184 byte-identical; all 6
+cube faces byte-identical). **Remaining:** host-side OBJ loading for `meshLoader` (external geometry,
+like `media`'s external texture — **not yet vetted**) and vendoring the reference engine for a
+standalone published package. Local-only; not pushed. See PORTING-GUIDE.md.
 
 ## License
 

@@ -46,14 +46,16 @@ GPU operations and (b) Babylon not mangling the reused GLSL (see PORTING-GUIDE.m
   | `executePass` (FBO bind, viewport, samplers, uniforms, blend, draw) | `EffectRenderer.render(wrapper, rtw)` + `onApplyObservable` uniform/texture binding |
   | `bindUniforms` (pass then globals, by GL type) | `effect.setFloat/Int/Bool/Float2/3/4` by parsed uniform type |
   | blit (`v_texCoord` copy) | `gl_FragCoord`/`texelFetch` copy wrapper |
+  | `extractUniformBlocks`/`bindUniformBlocks`/`packUniformsWithLayout` (std140 UBO) | raw-GL UBO (`createBuffer`/`uniformBlockBinding`/`bufferSubData`/`bindBufferBase`), same std140 packing — `remap` only |
   | `present` (Y at canvas) | (offscreen parity reads surfaces directly) |
   | `readPixels` (float→`round(v*255)`, flip to top-down) | `engine._readTexturePixels` (Float32) → same quantize + flip |
   - All 2D textures NEAREST/CLAMP (surfaces are sampled NEAREST — load-bearing for warp effects).
   - Engine/system uniforms fed by name every pass: `resolution`, `time` (normalized 0..1, 10s
     loop), `tileOffset=[0,0]`, `fullResolution`, `aspectRatio`, `renderScale=1`, etc.
   - MRT, `drawMode:points|billboards` (agent deposit), 3D-volume raymarch (2D-atlas MRT passes),
-    single-face AND 6-face-baked cubemaps, and the `drawMode:triangles` mesh raster are all
-    **implemented + parity-verified**. Only host OBJ loading for `meshLoader` remains.
+    single-face AND 6-face-baked cubemaps, the `drawMode:triangles` mesh raster, and the std140
+    **UBO** upload path (`remap`'s 267-vec4 polygon-zone config) are all **implemented +
+    parity-verified**. Only host OBJ loading for `meshLoader` remains (not yet vetted).
 
 - **`src/runtime/renderer.js`** — `NoisemakerRenderer`, the consumer host. Takes a Babylon engine
   + the reference `Pipeline` class (injected), `loadGraph(fatGraph)`, `renderFrame(t)`, and
@@ -79,27 +81,41 @@ byte-identical). The Babylon candidate renders the reused reference `Pipeline` +
 in **headless Chromium on ANGLE/Metal — the same WebGL2 driver the golden was rendered on** (a
 real GPU; `NullEngine` does no GPU work). `parity/compare.py` grades max-abs-diff + SSIM.
 
-**Result: 179 of 184 effects BYTE-IDENTICAL to the reference** (max-diff 0) — the entire catalog
-except 5 external-input effects. That's 149 renderable-2D effects + all 10 agent/points sims +
+**Result: 180 of 184 effects BYTE-IDENTICAL to the reference** (max-diff 0) — the entire catalog
+except 4 external-input effects. That's 149 renderable-2D effects + all 10 agent/points sims +
 `reactionDiffusion`/`navierStokes` + the **full 3D-volume raymarch** (7 synth3d generators ×
 `render3d`/`renderLit3d` × isosurface/voxel + `flow3d`/`palette3d`) + **single-face cubemaps**
 (`renderCubemapSurface`/`renderCubemap3d`) + the **SMRTicles wrappers** (`pointsEmit`/`pointsRender`/
-`pointsBillboardRender`) + **`loopBegin`/`loopEnd`** + points-based `wormhole`. Because candidate and
-golden share the WebGL2/ANGLE/Metal driver, parity is exact — **zero effects need the relaxed
-tolerances the Metal-backed godot/td ports required**, and the stateful/continuous/agent effects
-converge to a bit-identical steady state when evolved ~30s (the `EVOLVE` map in `render-batch.mjs`).
-The 5 non-byte-identical effects all require an external source the headless harness can't supply:
-**media** (texture), **text** (glyphs), **remap** (projection), **roll** (MIDI), **meshLoader** (OBJ).
+`pointsBillboardRender`) + **`loopBegin`/`loopEnd`** + points-based `wormhole` + the **`remap`
+polygon-zone router** (std140 UBO — see below). Because candidate and golden share the
+WebGL2/ANGLE/Metal driver, parity is exact — **zero effects need the relaxed tolerances the
+Metal-backed godot/td ports required**, and the stateful/continuous/agent effects converge to a
+bit-identical steady state when evolved ~30s (the `EVOLVE` map in `render-batch.mjs`). The 4
+non-byte-identical effects all require an external source the headless harness can't supply:
+**media** (texture), **text** (glyphs), **roll** (MIDI), **meshLoader** (OBJ — not yet vetted).
+
+**`remap` was mis-filed as external-input.** Its inputs are engine surfaces (`zoneN_tex: read(oN)`),
+not external data — the only "external" part is the 8-zone polygon config the Remap web app produces,
+which fills *uniforms*. It's the **sole** effect whose WebGL2 GLSL declares a `layout(std140) uniform`
+block (`vec4 data[267]`), uploaded as a packed **UBO**. The backend now mirrors `webgl2.js`'s UBO path
+(`extractUniformBlocks` + `bindUniformBlocks` + `packUniformsWithLayout`) on the raw GL context —
+lazily extracting the block on first draw (the program is current, so `ACTIVE_UNIFORM_BLOCKS` is
+queryable) and packing the merged uniforms into the std140 byte layout. Both the default
+`remap(bgColor:#336699)` and a non-trivial 2-zone routing config (`parity/programs/remap_zones.dsl`,
+golden minted via the reference WebGL2 harness) are byte-identical. ~31 other effects *declare* a
+`uniformLayout` but use plain uniforms in WebGL2 (the layout is WGSL/fallback metadata) → no block →
+the UBO bind is a no-op for them (verified: noise/cell/julia/gabor/mandelbrot/mashup/… unchanged).
 
 **The 3D-volume + cubemap chain needed ZERO new backend code.** The "3D volume" is a 2D *atlas*
 (64×4096 = 64 slices of 64²) the Pipeline sizes and allocates via the normal `createTexture` path;
 shaders read it with `texelFetch(volumeCache, ivec2(x, y + z·volSize))`. The synth3d precompute and
 the `render3d`/`renderLit3d`/cubemap raymarch are all fullscreen `drawBuffers:2` MRT passes the
 existing `_executeMRT` already runs. No real GPU 3D texture is used anywhere (`createTexture3D`
-stays a guard). The only new backend code was the mesh `drawMode:'triangles'` raster (`_executeTriangles`:
-a `DEPTH_COMPONENT24` renderbuffer + depth test + back-face cull + `gl_VertexID` geometry fetch from
-an empty VAO), plus a `_chain_\d+$` strip in input/count resolution so chain-scoped mesh refs find
-the unscoped surface (mirrors `webgl2.bindTextures`).
+stays a guard). The only two genuinely-new backend pieces were the mesh `drawMode:'triangles'` raster
+(`_executeTriangles`: a `DEPTH_COMPONENT24` renderbuffer + depth test + back-face cull + `gl_VertexID`
+geometry fetch from an empty VAO, plus a `_chain_\d+$` strip in input/count resolution so chain-scoped
+mesh refs find the unscoped surface — mirrors `webgl2.bindTextures`), and the std140 **UBO** path
+(`_bindUniformBlocks`/`_extractUniformBlocks`/`_packUniformsWithLayout`) for `remap`.
 
 **End-to-end validation.** The complex emergent test program (3D perlin → 1M-agent flow-field
 particles [MRT+points+billboards] → blur → navierStokes ×40 → palette/lighting/adjust/bloom/lens/
@@ -116,11 +132,12 @@ Babylon's `ALPHA_ADD` (= `SRC_ALPHA, ONE`, which crushes HDR trail accumulation)
 - DONE: compiler + pipeline reuse; `BabylonBackend` (fullscreen render, multi-pass, filters,
   2-/3-input mixers, blit, blend, uniforms, half-float, readback, **MRT, points/billboards-deposit
   agent sims, 3D-volume raymarch, `meshRender` triangle raster, `loopBegin`/`loopEnd`, SMRTicles
-  wrappers**); `NoisemakerRenderer` (+ `renderCubemap()` → 6-face bake to a Babylon cube texture); the
-  parity sweep (179/184 byte-identical) + the live-corpus + mesh-raster + cubemap-bake harnesses; two
-  Babylon example scenes (procedural texture, baked-cubemap skybox). The test target + 19/19 corpus +
-  all 6 cube faces byte-identical.
-- STAGED: host-side OBJ loading for `meshLoader` (external geometry, like `media`'s external texture);
+  wrappers, std140 UBO (`remap`)**); `NoisemakerRenderer` (+ `renderCubemap()` → 6-face bake to a
+  Babylon cube texture); the parity sweep (180/184 byte-identical) + the live-corpus + mesh-raster +
+  cubemap-bake harnesses; two Babylon example scenes (procedural texture, baked-cubemap skybox). The
+  test target + 19/19 corpus + all 6 cube faces byte-identical.
+- STAGED: host-side OBJ loading for `meshLoader` (external geometry, like `media`'s external texture —
+  **the effect is not yet vetted**; the triangle raster it feeds IS proven byte-identical via injection);
   vendoring the reference engine for a standalone published package (today the parity harness + example
   import the sibling reference by path). (WebGPU dropped — the WebGL2 shader path is the deliverable.)
 

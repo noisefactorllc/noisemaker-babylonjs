@@ -263,12 +263,18 @@ export class BabylonBackend {
       defines
     })
 
-    const rec = { wrapper, uniformTypes, samplerSet: new Set(samplerNames), hasCustomVertex }
+    // spec.uniformLayout: the std140 packing for effects whose GLSL declares a
+    // `layout(std140) uniform` block (only synth/remap ships one in WebGL2). Stored here;
+    // the block(s) are extracted lazily on first draw (see _bindUniformBlocks). The ~31 other
+    // effects that carry a uniformLayout use plain uniforms in their WebGL2 GLSL (the layout is
+    // WGSL/fallback metadata) → ACTIVE_UNIFORM_BLOCKS === 0 → the bind is a no-op for them.
+    const rec = { wrapper, uniformTypes, samplerSet: new Set(samplerNames), hasCustomVertex, uniformLayout: spec.uniformLayout || null }
     // Bind inputs + uniforms at draw time (onApply fires after enableEffect, before draw).
     wrapper.onApplyObservable.add(() => {
       if (!this._bindPass || this._bindPass.__copySrc) return
       this._bindInputs(this._bindPass, rec, wrapper.effect, this._bindState)
       this._bindUniforms(this._bindPass, rec, wrapper.effect, this._bindState)
+      this._bindUniformBlocks(this._bindPass, rec, this._bindState)
     })
 
     await this._whenReady(wrapper)
@@ -388,6 +394,7 @@ export class BabylonBackend {
     this.engine.enableEffect(prog.wrapper.drawWrapper)
     this._bindInputs(pass, prog, effect, state)
     this._bindUniforms(pass, prog, effect, state)
+    this._bindUniformBlocks(pass, prog, state)
     this.effectRenderer.bindBuffers(effect)
     this.effectRenderer.draw()
   }
@@ -649,6 +656,119 @@ export class BabylonBackend {
     }
   }
 
+  // ---- std140 uniform blocks (UBO) -------------------------------------------
+  // Only synth/remap declares a `layout(std140) uniform RemapUniforms { vec4 data[267]; }` block
+  // (its 8-zone polygon-router config — 267 vec4 slots — is too large for individual uniforms).
+  // The reference uploads it via a packed UBO (webgl2.js extractUniformBlocks + bindUniformBlocks +
+  // packUniformsWithLayout); we mirror that on the raw GL context exactly, so the bytes are identical.
+  // Lazily extract on first draw: the program is current (enableEffect just ran), so we can query its
+  // active blocks. No-op when the program has no std140 block (every effect except remap).
+
+  _bindUniformBlocks (pass, prog, state) {
+    if (!prog.uniformLayout) return
+    const gl = this.gl
+    if (prog.uniformBlocks === undefined) prog.uniformBlocks = this._extractUniformBlocks(prog.uniformLayout)
+    if (!prog.uniformBlocks.length) return
+    const merged = this._mergeBlockUniforms(pass, state)
+    for (const block of prog.uniformBlocks) {
+      const data = this._packUniformsWithLayout(merged, block.layoutArray, block.size)
+      gl.bindBuffer(gl.UNIFORM_BUFFER, block.buffer)
+      gl.bufferSubData(gl.UNIFORM_BUFFER, 0, data)
+      gl.bindBufferBase(gl.UNIFORM_BUFFER, block.bindingPoint, block.buffer)
+    }
+    gl.bindBuffer(gl.UNIFORM_BUFFER, null)
+  }
+
+  _extractUniformBlocks (layout) {
+    const gl = this.gl
+    const program = gl.getParameter(gl.CURRENT_PROGRAM)
+    const blocks = []
+    if (!program) return blocks
+    const count = gl.getProgramParameter(program, gl.ACTIVE_UNIFORM_BLOCKS)
+    if (!count) return blocks
+    const layoutArray = this._normalizeLayout(layout)
+    let maxSlot = 0
+    for (const e of layoutArray) maxSlot = Math.max(maxSlot, e.slot)
+    const layoutSize = (maxSlot + 1) * 16
+    for (let i = 0; i < count; i++) {
+      const name = gl.getActiveUniformBlockName(program, i)
+      if (!name) continue
+      const declaredSize = gl.getActiveUniformBlockParameter(program, i, gl.UNIFORM_BLOCK_DATA_SIZE)
+      const size = Math.max(declaredSize, layoutSize)
+      const bindingPoint = blocks.length
+      const buffer = gl.createBuffer()
+      gl.bindBuffer(gl.UNIFORM_BUFFER, buffer)
+      gl.bufferData(gl.UNIFORM_BUFFER, size, gl.DYNAMIC_DRAW)
+      gl.bindBuffer(gl.UNIFORM_BUFFER, null)
+      gl.uniformBlockBinding(program, i, bindingPoint)
+      this.uniformBuffers.set(`${name}#${this.uniformBuffers.size}`, buffer)
+      blocks.push({ name, index: i, bindingPoint, buffer, size, layoutArray })
+    }
+    return blocks
+  }
+
+  _normalizeLayout (layout) {
+    if (Array.isArray(layout)) return layout
+    const out = []
+    for (const [name, spec] of Object.entries(layout || {})) out.push({ name, slot: spec.slot, components: spec.components })
+    return out
+  }
+
+  // pass.uniforms override state.globalUniforms (same precedence as webgl2.bindUniformBlocks).
+  _mergeBlockUniforms (pass, state) {
+    const merged = {}
+    if (state && state.globalUniforms) {
+      for (const k in state.globalUniforms) { const v = state.globalUniforms[k]; if (v !== undefined) merged[k] = v }
+    }
+    if (pass && pass.uniforms) {
+      for (const k in pass.uniforms) { const v = pass.uniforms[k]; if (v !== undefined) merged[k] = v }
+    }
+    return merged
+  }
+
+  _resolveBlockAlias (name, uniforms) {
+    if (uniforms[name] !== undefined) return uniforms[name]
+    if (name === 'width' && uniforms.resolution) return uniforms.resolution[0]
+    if (name === 'height' && uniforms.resolution) return uniforms.resolution[1]
+    if (name === 'channels') return 4.0
+    return undefined
+  }
+
+  // std140 pack: each entry's first component lands at slot*16 + componentOffset, consecutive
+  // floats follow (little-endian). Byte-for-byte identical to webgl2.packUniformsWithLayout.
+  _packUniformsWithLayout (uniforms, layoutArray, minSize = 0) {
+    let maxSlot = 0
+    for (const e of layoutArray) maxSlot = Math.max(maxSlot, e.slot)
+    const bufferSize = Math.max(minSize, (maxSlot + 1) * 16)
+    if (!this._packedBuffer || bufferSize > this._packedBuffer.byteLength) {
+      this._packedBuffer = new ArrayBuffer(bufferSize)
+      this._packedView = new DataView(this._packedBuffer)
+      this._packedBytes = new Uint8Array(this._packedBuffer)
+    }
+    const view = this._packedView
+    this._packedBytes.fill(0, 0, bufferSize)
+    const co = { x: 0, y: 4, z: 8, w: 12 }
+    for (const entry of layoutArray) {
+      const value = this._resolveBlockAlias(entry.name, uniforms)
+      if (value === undefined || value === null) continue
+      const slotOffset = entry.slot * 16
+      const comp = entry.components
+      if (comp.length === 1) {
+        const offset = slotOffset + co[comp]
+        if (typeof value === 'boolean') view.setFloat32(offset, value ? 1.0 : 0.0, true)
+        else if (typeof value === 'number') view.setFloat32(offset, value, true)
+      } else {
+        const offset = slotOffset + co[comp[0]]
+        if (Array.isArray(value)) {
+          for (let i = 0; i < Math.min(value.length, comp.length); i++) view.setFloat32(offset + i * 4, value[i], true)
+        } else if (typeof value === 'number') {
+          view.setFloat32(offset, value, true)
+        }
+      }
+    }
+    return this._packedBytes.subarray(0, bufferSize)
+  }
+
   _resolveAlphaMode (blend) {
     if (!blend) return Constants.ALPHA_DISABLE
     if (Array.isArray(blend)) {
@@ -698,6 +818,8 @@ export class BabylonBackend {
 
   destroy () {
     for (const id of [...this.textures.keys()]) this.destroyTexture(id)
+    for (const buf of this.uniformBuffers.values()) { try { this.gl.deleteBuffer(buf) } catch { /* noop */ } }
+    this.uniformBuffers.clear()
     try { this.effectRenderer?.dispose?.() } catch { /* noop */ }
   }
 }

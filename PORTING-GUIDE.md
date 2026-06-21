@@ -98,7 +98,36 @@ Two subtleties that mirror `webgl2.js`:
   exactly like `media`'s external texture. The headless corpus renders empty (flat bg), which the
   triangles path reproduces byte-for-byte. To prove the raster itself, `parity/mesh-raster-check.mjs`
   injects an identical procedural sphere into **both** engines' mesh textures and compares: a
-  depth-tested, back-face-culled, Blinn-Phong sphere, max-abs-diff 0.
+  depth-tested, back-face-culled, Blinn-Phong sphere, max-abs-diff 0. NOTE: this vets the **raster
+  pass** (`render/meshRender`), NOT the **`meshLoader` effect** (host OBJ parse → mesh-surface upload),
+  which is **not yet vetted** — it needs the host-side loader (staged, see below).
+
+## The std140 UBO path (`remap` — the other genuinely new backend piece)
+
+`synth/remap` (the polygon-zone router companion to the Remap web app) is the **only** effect whose
+WebGL2 GLSL declares a uniform block: `layout(std140) uniform RemapUniforms { vec4 data[267]; };`. Its
+8-zone polygon config (per-zone vertex count, active flag, alpha, and up to 64 verts packed two-per-vec4
+= 267 vec4 slots) is too large for individual uniforms, so the reference uploads it as a packed **UBO**.
+`remap`'s inputs are *engine surfaces* (`zoneN_tex: read(oN)`), so it is **not** an external-input
+effect — it was mis-filed as one only because the backend hadn't implemented the UBO path, so even the
+default `remap(bgColor:#336699)` rendered transparent-black (`data[HEADER_SLOT]` read zeros) instead of
+`#336699`. `_bindUniformBlocks` mirrors `webgl2.js` (`extractUniformBlocks` + `bindUniformBlocks` +
+`packUniformsWithLayout`) on the raw GL context, byte-for-byte:
+- **Lazy extraction.** On the first draw the program is current (`enableEffect` just ran), so query
+  `gl.getParameter(CURRENT_PROGRAM)` → `ACTIVE_UNIFORM_BLOCKS`; for each block create a `UNIFORM_BUFFER`
+  sized `max(declaredSize, (maxSlot+1)*16)`, `uniformBlockBinding(program, i, bindingPoint)`. Cached on
+  the program rec. **No-op for the ~31 effects that declare a `uniformLayout` but use plain uniforms in
+  WebGL2** (the layout is WGSL/fallback metadata) — they have no block, so the cached result is empty.
+- **Per-draw pack.** Merge `pass.uniforms` over `globalUniforms`, pack each layout entry into the
+  std140 byte layout (`slot*16 + {x:0,y:4,z:8,w:12}`, little-endian f32; `width`/`height`/`channels`
+  aliases resolved from `resolution`), `bufferSubData` + `bindBufferBase`. Babylon doesn't manage the
+  user block (raw EffectWrapper has no engine UBOs), so the manual bind to binding point 0 wins.
+- Bound in BOTH draw paths: the `onApplyObservable` callback (single-output `EffectRenderer.render`)
+  and `_drawFullscreenInto` (raw MRT). `remap` is single-output, but both are covered defensively.
+
+Verified byte-identical for the default program AND `parity/programs/remap_zones.dsl` (a quad + a
+triangle routing two noise sources over the bg color — golden minted via the reference WebGL2 harness),
+which exercises the full per-zone vertex packing, polygon point-in-zone tests, and edge smoothing.
 
 ## Parity invariants (same as the WebGL2 reference)
 
@@ -139,11 +168,11 @@ to 0..255, flip rows bottom-up→top-down. Result: **86/87 pass at strict `max-d
 ## Remaining staged pass types
 
 MRT (`pass.drawBuffers>1` / multiple `outputs`), `drawMode:'points'|'billboards'` (agent deposit),
-`drawMode:'triangles'` (mesh raster), 3D-volume raymarch, single-face cubemaps, AND the 6-face
-cubemap bake (`NoisemakerRenderer.renderCubemap()`) are all implemented and parity-verified
-(179/184 byte-identical; all 6 cube faces byte-identical). What's left:
+`drawMode:'triangles'` (mesh raster), 3D-volume raymarch, single-face cubemaps, the 6-face cubemap
+bake (`NoisemakerRenderer.renderCubemap()`), AND the std140 **UBO** path (`remap`) are all implemented
+and parity-verified (180/184 byte-identical; all 6 cube faces byte-identical). What's left:
 - **Host OBJ loading for `meshLoader`** — parse `share/meshes/*.obj` and upload to the mesh surfaces
-  (a `NoisemakerRenderer` concern, like wiring an external texture for `media`). The raster it feeds
-  is already proven.
+  (a `NoisemakerRenderer` concern, like wiring an external texture for `media`). The triangle raster it
+  feeds is already proven byte-identical, but **the `meshLoader` effect itself is not yet vetted**.
 - **Vendoring** the reference engine for a standalone published package (today the harness + examples
   import the sibling reference by path).
