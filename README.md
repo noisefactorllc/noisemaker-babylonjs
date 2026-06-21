@@ -18,12 +18,15 @@ render graph; here it goes one level deeper — the backend interface. See
 
 ## Parity
 
-**86 / 87 Tier-1 programs pixel-identical at strict tolerance** (max-abs-diff ≤ 2, most exactly 0),
-graded against the byte-identical reference WebGL2 goldens. Because the candidate renders on the
-same WebGL2/ANGLE/Metal driver as the golden, **no effect needs the relaxed per-effect tolerances
-the Metal-backed Unity/Godot/TD ports required**. The one non-graded program, `reactionDiffusion`
-(a continuous Gray-Scott solver), amplifies sub-ULP differences over its iteration loop and is the
-single documented skip — the same discrete-vs-continuous boundary every sibling port hits.
+**149 / 152 renderable-2D effects pixel-identical at strict tolerance** (max-abs-diff ≤ 2, most
+exactly 0), graded against the byte-identical reference WebGL2 goldens. Because the candidate
+renders on the same WebGL2/ANGLE/Metal driver as the golden, **no effect needs the relaxed
+per-effect tolerances the Metal-backed Unity/Godot/TD ports required** — and the continuous solvers
+`reactionDiffusion` + `navierStokes`, which those ports document as cross-backend-divergent skips,
+**pixel-parity byte-identically here** when evolved ~30s to a deterministic steady state. The 3
+skips are external-input effects (media/text/remap). The **10 points/agent sims** (physarum, life,
+flock, …) render correctly via the MRT + points executor (162 programs render, 0 errors) but aren't
+strict-graded (chaotic deposit sims). Remaining staged: 3D-volume raymarch + mesh + cubemap.
 
 ```bash
 npm install                                   # @babylonjs/core + dev tooling

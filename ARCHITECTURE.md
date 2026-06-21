@@ -75,12 +75,17 @@ byte-identical). The Babylon candidate renders the reused reference `Pipeline` +
 in **headless Chromium on ANGLE/Metal — the same WebGL2 driver the golden was rendered on** (a
 real GPU; `NullEngine` does no GPU work). `parity/compare.py` grades max-abs-diff + SSIM.
 
-**Result: 86 / 87 pass at the strict default (max-diff ≤ 2.001), zero needing the relaxed
-tolerances the Metal-backed godot/td ports required** — because candidate and golden share the
-WebGL2/ANGLE/Metal driver, parity is byte-tight (most effects max-diff 0). The 87th,
-`reactionDiffusion` (continuous Gray-Scott solver), amplifies sub-ULP differences over its
-iteration loop and is the single documented skip — consistent with every sibling port's
-discrete-vs-continuous principle.
+**Result: 149 / 152 renderable-2D effects pass at the strict default (max-diff ≤ 2.001), zero
+needing the relaxed tolerances the Metal-backed godot/td ports required** — because candidate and
+golden share the WebGL2/ANGLE/Metal driver, parity is byte-tight (most effects max-diff 0). This
+**includes the continuous solvers `reactionDiffusion` + `navierStokes`**, which every Metal-backed
+sibling port documents as cross-backend-divergent skips but which pixel-parity BYTE-IDENTICALLY
+here when evolved ~30s to a deterministic steady-state attractor (the `EVOLVE` map in
+`render-batch.mjs`). The 3 skips are external-input effects (media/text/remap need MIDI/glyph/
+projection sources). Beyond 2D, the **10 points/agent sims** (physarum, life, flock, …) render
+correctly via the MRT + points-deposit executor (162 programs render, 0 errors) but are
+render-verified-only: their points-deposit additive float blend is fp-order-sensitive and their
+chaotic trajectories amplify it (unlike the field solvers, which converge bit-exact).
 
 ## Status & staged work
 
