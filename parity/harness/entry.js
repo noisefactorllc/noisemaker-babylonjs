@@ -65,7 +65,15 @@ window.nmRunFatGraph = async function (fat, opts = {}) {
   const out = { width: px.width, height: px.height, data: Array.from(px.data), readId, renderSurface: name }
 
   if (opts.debug) {
-    const dbg = { readId, renderSurface: name, surfaces: {}, textures: [], programs: [...backend.programs.keys()] }
+    const caps = engine.getCaps ? engine.getCaps() : {}
+    const dbg = {
+      readId,
+      renderSurface: name,
+      caps: { blendFloat: caps.blendFloat, colorBufferFloat: caps.colorBufferFloat, textureFloat: caps.textureFloat, textureHalfFloat: caps.textureHalfFloat, textureFloatLinearFiltering: caps.textureFloatLinearFiltering, textureHalfFloatLinearFiltering: caps.textureHalfFloatLinearFiltering },
+      surfaces: {},
+      textures: [],
+      programs: [...backend.programs.keys()]
+    }
     for (const [sname, surf] of pipeline.surfaces) dbg.surfaces[sname] = { read: surf.read, write: surf.write }
     for (const [id, rec] of backend.textures) {
       try {

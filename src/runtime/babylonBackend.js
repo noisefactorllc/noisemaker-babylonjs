@@ -397,17 +397,49 @@ export class BabylonBackend {
     const count = this._pointCount(pass, state)
     if (!count) return
     this.engine.bindFramebuffer(outRec.rtw) // bind FBO + viewport; deposit accumulates (no clear)
-    this.engine.setAlphaMode(this._resolveAlphaMode(pass.blend))
     const effect = prog.wrapper.effect
     this.engine.enableEffect(prog.wrapper.drawWrapper)
     this._bindInputs(pass, prog, effect, state)
     this._bindUniforms(pass, prog, effect, state)
+    // Set blend with RAW gl, EXACTLY like webgl2.js — additive deposit MUST be blendFunc(ONE,ONE).
+    // Babylon's setAlphaMode(ALPHA_ADD) is (SRC_ALPHA, ONE), which scales each deposit by its own
+    // alpha and crushes the HDR trail accumulation (dim/low-contrast output). Raw gl is safe here
+    // because the points draw is a raw gl.drawArrays (not a Babylon-managed draw).
+    this._setBlendRaw(pass.blend)
     gl.bindVertexArray(this._emptyVAO)
     gl.drawArrays(drawMode === 'billboards' ? gl.TRIANGLES : gl.POINTS, 0, drawMode === 'billboards' ? count * 6 : count)
     gl.bindVertexArray(null)
+    gl.disable(gl.BLEND)
     this.engine.unBindFramebuffer(outRec.rtw)
-    this.engine.setAlphaMode(Constants.ALPHA_DISABLE)
-    this.engine.wipeCaches(true)
+    this.engine.wipeCaches(true) // resync Babylon's cached GL state after the raw draw
+  }
+
+  // Raw-GL blend setup matching webgl2.js executePass: array → blendFunc(src,dst); truthy → additive
+  // ONE,ONE; falsy → off. (FUNC_ADD equation.)
+  _setBlendRaw (blend) {
+    const gl = this.gl
+    if (!blend) { gl.disable(gl.BLEND); return }
+    gl.enable(gl.BLEND)
+    gl.blendEquation(gl.FUNC_ADD)
+    if (Array.isArray(blend)) gl.blendFunc(this._blendFactorGL(blend[0]), this._blendFactorGL(blend[1]))
+    else gl.blendFunc(gl.ONE, gl.ONE)
+  }
+
+  _blendFactorGL (f) {
+    const gl = this.gl
+    if (typeof f === 'number') return f
+    const m = {
+      zero: gl.ZERO, one: gl.ONE, ZERO: gl.ZERO, ONE: gl.ONE,
+      src: gl.SRC_COLOR, 'src-color': gl.SRC_COLOR, SRC_COLOR: gl.SRC_COLOR,
+      'one-minus-src': gl.ONE_MINUS_SRC_COLOR, ONE_MINUS_SRC_COLOR: gl.ONE_MINUS_SRC_COLOR,
+      dst: gl.DST_COLOR, 'dst-color': gl.DST_COLOR, DST_COLOR: gl.DST_COLOR,
+      'one-minus-dst': gl.ONE_MINUS_DST_COLOR, ONE_MINUS_DST_COLOR: gl.ONE_MINUS_DST_COLOR,
+      'src-alpha': gl.SRC_ALPHA, SRC_ALPHA: gl.SRC_ALPHA,
+      'one-minus-src-alpha': gl.ONE_MINUS_SRC_ALPHA, ONE_MINUS_SRC_ALPHA: gl.ONE_MINUS_SRC_ALPHA,
+      'dst-alpha': gl.DST_ALPHA, DST_ALPHA: gl.DST_ALPHA,
+      'one-minus-dst-alpha': gl.ONE_MINUS_DST_ALPHA, ONE_MINUS_DST_ALPHA: gl.ONE_MINUS_DST_ALPHA
+    }
+    return m[f] ?? gl.ONE
   }
 
   // count: number, or 'auto'/'screen'/'input' → texel count of the agent state texture (xyzTex).

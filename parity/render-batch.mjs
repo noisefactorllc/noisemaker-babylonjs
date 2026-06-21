@@ -18,9 +18,16 @@ import { ROOT, INDEX_HTML, encodePNG, ensureBundle } from './render-candidate.mj
 // per 60fps frame over a 10s loop); the chaotic transient washes out to a deterministic
 // attractor that is bit-identical to the golden (same ANGLE/Metal driver). Goldens for these
 // MUST be generated with the matching batch-golden --frames/--timestep.
+const _EVO = { frames: 1800, timestep: 0.0016667 } // 30s at the demo's 1/600 rate
 const EVOLVE = {
-  reactionDiffusion: { frames: 1800, timestep: 0.0016667 },
-  navierStokes: { frames: 1800, timestep: 0.0016667 }
+  reactionDiffusion: _EVO,
+  navierStokes: _EVO,
+  // agent/points sims also evolve to a deterministic steady state (the additive-deposit blend is
+  // now exact — raw blendFunc(ONE,ONE) — so they're bit-reproducible, not chaotic).
+  attractor: _EVO, buddhabrot: _EVO, dla: _EVO, flock: _EVO, flow: _EVO,
+  hydraulic: _EVO, lenia: _EVO, life: _EVO, physarum: _EVO, physical: _EVO,
+  // the complex emergent end-to-end test target (particles + navierStokes + lens stack).
+  target: _EVO, target_particles: _EVO
 }
 
 function parse (argv) {
