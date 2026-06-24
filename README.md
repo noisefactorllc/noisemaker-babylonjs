@@ -173,4 +173,6 @@ cube faces byte-identical). **Remaining:** the 4 external-input effects (`media`
 
 ## License
 
-MIT (matching the reference). Noisemaker is a trademark of Noise Factor LLC.
+Released under the MIT License (see [LICENSE](LICENSE)). Use of the Noisemaker and Noise Factor names in derivative products is subject to the [Trademark Policy](TRADEMARK.md).
+
+Copyright © 2026 Noise Factor LLC
