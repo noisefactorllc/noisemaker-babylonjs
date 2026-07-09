@@ -1004,9 +1004,11 @@
     "dir": "lighting",
     "func": "lighting",
     "progName": "lighting",
-    "role": "filter",
+    "role": "mixer",
     "threeD": false,
-    "surfaceParams": [],
+    "surfaceParams": [
+      "heightMap"
+    ],
     "hasInputTex": true,
     "mrt": false,
     "points": false,
@@ -1158,6 +1160,26 @@
     "staged": false,
     "hasDefault": false,
     "defaultProgram": null,
+    "seed": false,
+    "have": true
+  },
+  {
+    "ns": "filter",
+    "dir": "parallax",
+    "func": "parallax",
+    "progName": "parallax",
+    "role": "mixer",
+    "threeD": false,
+    "surfaceParams": [
+      "heightMap"
+    ],
+    "hasInputTex": true,
+    "mrt": false,
+    "points": false,
+    "compute": false,
+    "staged": false,
+    "hasDefault": true,
+    "defaultProgram": "search filter, synth\n\nnoise(ridges: true)\n.parallax()\n.write(o0)",
     "seed": false,
     "have": true
   },
@@ -1969,7 +1991,7 @@
     "hasDefault": false,
     "defaultProgram": null,
     "seed": false,
-    "have": false
+    "have": true
   },
   {
     "ns": "filter",
@@ -2213,7 +2235,7 @@
     "hasDefault": true,
     "defaultProgram": "search mixer, synth\n\nnoise(\n  type: constant,\n  octaves: 4,\n  ridges: true,\n  loopScale: 100,\n  speed: 100\n)\n  .write(o0)\n\nsolid(color: #006d4c)\n  .write(o1)\n\nperlin(ridges: true)\n  .write(o2)\n\ngradient(\n  type: noiseGradient,\n  color1: #ffffffff,\n  color2: #a9a9a9ff,\n  color3: #515151ff,\n  color4: #000000ff,\n  colorCount: 3\n)\n  .write(o3)\n\nmashup(\n  source: read(o3),\n  layers: 3,\n  smoothness: 0.22,\n  layer0_tex: read(o0),\n  layer1_tex: read(o1),\n  layer2_tex: read(o2)\n)\n  .write(o4)",
     "seed": false,
-    "have": false
+    "have": true
   },
   {
     "ns": "mixer",
@@ -2351,7 +2373,7 @@
     "hasDefault": false,
     "defaultProgram": null,
     "seed": false,
-    "have": false
+    "have": true
   },
   {
     "ns": "points",
@@ -2367,9 +2389,9 @@
     "compute": false,
     "staged": true,
     "hasDefault": true,
-    "defaultProgram": "search points, synth, render\n\nsolid()\n  .pointsEmit(stateSize: 512)\n  .buddhabrot()\n  .pointsRender(intensity: 99)\n  .write(o0)\n\nrender(o0)",
+    "defaultProgram": "search points, synth, render\n\nperlin()\n  .pointsEmit(stateSize: 512)\n  .buddhabrot()\n  .pointsRender(intensity: 99)\n  .write(o0)\n\nrender(o0)",
     "seed": false,
-    "have": false
+    "have": true
   },
   {
     "ns": "points",
@@ -2387,7 +2409,7 @@
     "hasDefault": false,
     "defaultProgram": null,
     "seed": false,
-    "have": false
+    "have": true
   },
   {
     "ns": "points",
@@ -2405,7 +2427,7 @@
     "hasDefault": false,
     "defaultProgram": null,
     "seed": false,
-    "have": false
+    "have": true
   },
   {
     "ns": "points",
@@ -2423,7 +2445,7 @@
     "hasDefault": false,
     "defaultProgram": null,
     "seed": false,
-    "have": false
+    "have": true
   },
   {
     "ns": "points",
@@ -2441,7 +2463,7 @@
     "hasDefault": false,
     "defaultProgram": null,
     "seed": false,
-    "have": false
+    "have": true
   },
   {
     "ns": "points",
@@ -2459,7 +2481,7 @@
     "hasDefault": false,
     "defaultProgram": null,
     "seed": false,
-    "have": false
+    "have": true
   },
   {
     "ns": "points",
@@ -2477,7 +2499,7 @@
     "hasDefault": false,
     "defaultProgram": null,
     "seed": false,
-    "have": false
+    "have": true
   },
   {
     "ns": "points",
@@ -2495,7 +2517,7 @@
     "hasDefault": false,
     "defaultProgram": null,
     "seed": false,
-    "have": false
+    "have": true
   },
   {
     "ns": "points",
@@ -2513,7 +2535,7 @@
     "hasDefault": false,
     "defaultProgram": null,
     "seed": false,
-    "have": false
+    "have": true
   },
   {
     "ns": "render",
@@ -2713,7 +2735,7 @@
     "hasDefault": true,
     "defaultProgram": "search synth3d, filter3d, render\n\nnoise3d()\n.renderLit3d(specularIntensity: 2, shininess: 256)\n.write(o0)",
     "seed": false,
-    "have": false
+    "have": true
   },
   {
     "ns": "synth",
@@ -3126,7 +3148,7 @@
     "hasDefault": false,
     "defaultProgram": null,
     "seed": false,
-    "have": true
+    "have": false
   },
   {
     "ns": "synth",
@@ -3380,6 +3402,6 @@
     "hasDefault": true,
     "defaultProgram": "search synth3d, filter3d, render\n\nshape3d(speedA: -2, speedB: 2)\n.render3d(threshold: 0.75)\n.write(o0)",
     "seed": false,
-    "have": false
+    "have": true
   }
 ]
