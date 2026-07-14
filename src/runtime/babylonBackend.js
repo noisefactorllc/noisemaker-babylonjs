@@ -169,6 +169,25 @@ export class BabylonBackend {
     throw new Error('BabylonBackend.createTexture3D not implemented (no shipped effect uses a real 3D texture; 3D volumes are 2D atlases)')
   }
 
+  // Raw CPU->GPU data upload (webgl2.js `uploadDataTexture`): used by the engine's external-state
+  // path ONLY for synth/roll's MIDI note grid (`this.backend.uploadDataTexture('midiNoteGrid',
+  // noteGrid|emptyNoteGrid, 128, 16)`, called every frame whether or not a live MIDI source is
+  // attached — the empty grid is the no-input fallback, same as media/text's default textures).
+  // Mirrors the reference: create (or recreate, if the size changed) an RGBA32F NEAREST/CLAMP
+  // texture on first call, texSubImage2D-update it on every call after. Reuses createTexture so
+  // the result is a normal `this.textures` record any later sampler-input lookup already finds.
+  uploadDataTexture (id, data, width, height) {
+    const gl = this.gl
+    let rec = this.textures.get(id)
+    if (!rec || rec.width !== width || rec.height !== height) {
+      rec = this.createTexture(id, { width, height, format: 'rgba32f' })
+    }
+    const glTex = this._glTexOf(rec)
+    gl.bindTexture(gl.TEXTURE_2D, glTex)
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.FLOAT, data)
+    gl.bindTexture(gl.TEXTURE_2D, null)
+  }
+
   destroyTexture (id) {
     const rec = this.textures.get(id)
     if (!rec) return

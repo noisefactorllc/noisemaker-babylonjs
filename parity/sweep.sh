@@ -6,28 +6,28 @@
 #   bash parity/sweep.sh noise blur # just these
 #
 # Because the Babylon candidate renders on the SAME WebGL2 driver (ANGLE/Metal) as the golden,
-# parity is byte-tight: every effect passes at the strict default (max-diff <= 2.001), with
-# NONE needing the per-effect relaxed tolerances the Metal-backed godot/td ports required. The
-# relaxed map below is kept only as a safety net. The sole non-graded program is the continuous
-# Gray-Scott solver reactionDiffusion (amplifies sub-ULP differences over its iteration loop —
-# faithfully ported but not bit-reproducible across implementations; documented, skipped).
+# parity is byte-EXACT: every graded effect passes at max-abs-diff 0. There is no per-effect
+# relaxed-tolerance map: a 2026-07 full re-grade (every catalogued effect, including the
+# continuous solvers reactionDiffusion/navierStokes evolved ~30s via the EVOLVE path) confirmed
+# 0 diff across the board, including the handful of effects (newton, shadow, uvRemap,
+# distortion, edge, pinch, crt) that once carried a relaxed tolerance here as a safety net — that
+# net is retired; any non-zero diff now means a real BabylonBackend bug, not a rounding quirk.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-tol_for() {
-  case "$1" in
-    newton) echo "255 0.98";; shadow) echo "255 0.99";; uvRemap) echo "22 0.98";;
-    distortion) echo "12 0.98";; edge) echo "8 0.98";; pinch) echo "6 0.98";; crt) echo "3 0.98";;
-    *) echo "2.001 0.98";;
-  esac
-}
+tol_for() { echo "0 0.999"; }
 # Documented skips: external-input effects ONLY — they need a MIDI/media/glyph source the parity
-# harness doesn't supply (golden is degenerate). NOTE remap is NOT skipped: its inputs are engine
-# surfaces and it grades byte-identical via the std140 UBO path (the only "external" part is the
-# zone-polygon config, which fills uniforms). Everything else is graded, including the continuous
-# solvers AND the agent/points sims, all of which evolve to a bit-identical steady state (the EVOLVE
-# map in render-batch.mjs runs them ~30s; the additive deposit blend is exact — raw blendFunc(ONE,ONE)).
-is_skip() { case "$1" in media|text) return 0;; *) return 1;; esac; }
+# harness doesn't supply, so their program only exercises the no-input fallback path. NOTE remap
+# is NOT skipped: its inputs are engine surfaces and it grades byte-identical via the std140 UBO
+# path (the only "external" part is the zone-polygon config, which fills uniforms). media/text/roll
+# DO numerically pass at max-abs-diff 0 on their fallback path (proving the base plumbing is
+# correct on both backends) but stay policy-skipped: a pass here is necessary, not sufficient,
+# evidence — it doesn't exercise the actual external-data upload (a real image/glyph atlas/MIDI
+# stream), which the headless harness can't supply deterministically. Everything else is graded,
+# including the continuous solvers AND the agent/points sims, all of which evolve to a
+# bit-identical steady state (the EVOLVE map in render-batch.mjs runs them ~30s; the additive
+# deposit blend is exact — raw blendFunc(ONE,ONE)).
+is_skip() { case "$1" in media|text|roll) return 0;; *) return 1;; esac; }
 
 PY="parity/.venv/bin/python"
 
