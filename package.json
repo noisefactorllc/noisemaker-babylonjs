@@ -1,5 +1,5 @@
 {
-  "name": "noisemaker-babylonjs",
+  "name": "noisemaker-for-babylonjs",
   "version": "0.1.0",
   "description": "Noisemaker for Babylon.js — DSL compiler, render-graph executor, and effects collection running pixel-identically to the reference WebGL2 engine.",
   "author": "Noise Factor LLC <team@noisefactor.io>",

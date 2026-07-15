@@ -2,7 +2,7 @@
 
 A Babylon.js port of the Noisemaker procedural shader engine (DSL compiler, render-graph
 executor, effects collection), pixel-identical to the reference WebGL2 engine. Sibling to
-`noisemaker-unity` (Unity), `noisemaker-godot`, `noisemaker-td`.
+`noisemaker-for-unity` (Unity), `noisemaker-for-godot`, `noisemaker-for-touchdesigner`.
 
 ## The key insight: a deeper seam than the foreign-language ports
 

@@ -3,8 +3,8 @@
 A Babylon.js port of the Noisemaker procedural shader engine: DSL compiler, render-graph executor,
 and effects collection, **pixel-identical to the reference WebGL2 engine**. The engine is the
 **published distribution** (`shaders.noisedeck.app`), fetched by `vendor/fetch.sh` into
-`vendor/noisemaker/` (gitignored — never committed). Sibling to `noisemaker-unity` (Unity),
-`noisemaker-godot`, `noisemaker-td`.
+`vendor/noisemaker/` (gitignored — never committed). Sibling to `noisemaker-for-unity` (Unity),
+`noisemaker-for-godot`, `noisemaker-for-touchdesigner`.
 
 ## The seam: deeper than the foreign-language ports
 

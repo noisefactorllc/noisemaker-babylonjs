@@ -32,7 +32,7 @@ is_skip() { case "$1" in media|text|roll) return 0;; *) return 1;; esac; }
 PY="parity/.venv/bin/python"
 if [[ -n "${LEDGER_PATH+x}" ]]; then LEDGER_EXPLICIT=1; else LEDGER_EXPLICIT=0; fi
 LEDGER_PATH="${LEDGER_PATH:-parity/ledger.json}"
-RESULTS="$(mktemp -t noisemaker-babylonjs-ledger.XXXXXX)"
+RESULTS="$(mktemp -t noisemaker-for-babylonjs-ledger.XXXXXX)"
 trap 'rm -f "$RESULTS"' EXIT
 record_result() {
   printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" >> "$RESULTS"

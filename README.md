@@ -83,7 +83,7 @@ chain effects, write the result to an output surface (`.write(o0)`), then pick o
 ## Use it in your own Babylon project
 
 > **Install into your own project.** This package isn't published to npm yet. Until it is, install
-> it from git — `npm i github:noisefactorllc/noisemaker-babylonjs` — or vendor `src/runtime/` into
+> it from git — `npm i github:noisefactorllc/noisemaker-for-babylonjs` — or vendor `src/runtime/` into
 > your app and run `vendor/fetch.sh` to pull the engine. The snippets here import the renderer by
 > its in-repo path (`./src/runtime/renderer.js`); the demos in `examples/` import it as
 > `../src/runtime/renderer.js`.
